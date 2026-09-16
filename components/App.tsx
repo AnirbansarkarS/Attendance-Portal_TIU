@@ -3085,933 +3085,576 @@ function AttendancePage({
   notify: (text: string) => void;
   showError: (text: string) => void;
 }) {
+  const [department, setDepartment] = useState("");
+  const [batch, setBatch] = useState("");
+  const [group, setGroup] = useState("");
+  const [date, setDate] = useState(() => {
+    const now = new Date();
+    const offset = now.getTimezoneOffset();
+    return new Date(now.getTime() - offset * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+  });
 
-  const [department, setDepartment] =
-    useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [ocrText, setOcrText] = useState("");
+  const [detectedCodes, setDetectedCodes] = useState<string[]>([]);
+  const [rows, setRows] = useState<AttendanceRow[]>([]);
+  const [processing, setProcessing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [verified, setVerified] = useState(false);
 
-  const [batch, setBatch] =
-    useState("");
+  const filteredBatches = batches.filter(
+    (b) => b.department_id === department && b.is_active
+  );
 
-  const [group, setGroup] =
-    useState("");
+  const filteredGroups = groups.filter(
+    (g) => g.batch_id === batch && g.is_active
+  );
 
-  const [date, setDate] =
-    useState(
-      new Date()
-        .toISOString()
-        .slice(0, 10)
-    );
-
-  const [file, setFile] =
-    useState<File | null>(null);
-
-  const [ocrText, setOcrText] =
-    useState("");
-
-  const [rows, setRows] =
-    useState<AttendanceRow[]>([]);
-
-  const [processing, setProcessing] =
-    useState(false);
-
-  const [verified, setVerified] =
-    useState(false);
-
-
-  const filteredBatches =
-    batches.filter(
-      (b) =>
-        b.department_id ===
-          department &&
-        b.is_active
-    );
-
-
-  const filteredGroups =
-    groups.filter(
-      (g) =>
-        g.batch_id === batch &&
-        g.is_active
-    );
-
-
-  const groupStudents =
-    students.filter(
-      (s) =>
-        s.group_id === group &&
-        s.is_active
-    );
-
+  const groupStudents = students.filter(
+    (s) =>
+      s.department_id === department &&
+      s.batch_id === batch &&
+      s.group_id === group &&
+      s.is_active
+  );
 
   function resetAttendance() {
-
     setFile(null);
     setOcrText("");
+    setDetectedCodes([]);
     setRows([]);
     setVerified(false);
-
   }
 
+  /*
+   * Attendance rule:
+   *
+   * 1. Teacher selects Department + Batch + Group + Date.
+   * 2. Teacher uploads the attendance photo.
+   * 3. OCR reads four-digit codes from the photo.
+   * 4. If a student's four-digit attendance code is found -> PRESENT.
+   * 5. If it is not found -> ABSENT.
+   * 6. Teacher can manually correct the status in the verification table.
+   */
+  function extractFourDigitCodes(text: string): string[] {
+    const normalized = text
+      .replace(/[Oo]/g, "0")
+      .replace(/[IiLl]/g, "1")
+      .replace(/[Zz]/g, "2")
+      .replace(/[Ss]/g, "5")
+      .replace(/[Gg]/g, "6")
+      .replace(/[Bb]/g, "8");
+
+    const matches = normalized.match(/\b\d{4}\b/g) || [];
+
+    return Array.from(
+      new Set(
+        matches
+          .map((code) => code.trim())
+          .filter((code) => code.length === 4)
+          // Avoid common year values being treated as student codes.
+          .filter((code) => {
+            const value = Number(code);
+            return !(value >= 1900 && value <= 2100);
+          })
+      )
+    );
+  }
 
   async function processOCR() {
-
-    if (
-      !department ||
-      !batch ||
-      !group ||
-      !date ||
-      !file
-    ) {
-
+    if (!department || !batch || !group || !date || !file) {
       showError(
         "Select Date, Department, Batch, Group and Attendance Photo."
       );
-
       return;
     }
-
 
     if (!groupStudents.length) {
-
-      showError(
-        "No active students found in this group."
-      );
-
+      showError("No active students found in this group.");
       return;
     }
-
 
     setProcessing(true);
     setVerified(false);
+    setRows([]);
+    setDetectedCodes([]);
 
+    let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
 
     try {
+      worker = await createWorker("eng");
 
-      const worker =
-        await createWorker(
-          "eng"
-        );
-
-
-      const result =
-        await worker.recognize(
-          file
-        );
-
-
-      await worker.terminate();
-
-
-      const text =
-        result.data.text ||
-        "";
-
+      const result = await worker.recognize(file);
+      const text = result.data.text || "";
 
       setOcrText(text);
 
+      const rawCodes = extractFourDigitCodes(text);
 
       /*
-       * Extract 4-digit numbers.
+       * Only codes belonging to the currently selected group are relevant.
+       * This prevents unrelated four-digit numbers from the photo from
+       * appearing as attendance codes.
        */
-
-      const codes =
-        text.match(
-          /\b\d{4}\b/g
-        ) || [];
-
-
-      const uniqueCodes =
-        Array.from(
-          new Set(codes)
-        );
-
-
-      const detected =
-        new Set(
-          uniqueCodes
-        );
-
-
-      const attendanceRows: AttendanceRow[] =
-        groupStudents.map(
-          (student): AttendanceRow => {
-
-            const isDetected =
-              detected.has(
-                student.attendance_code
-              );
-
-            const status: AttendanceStatus =
-              isDetected ? "P" : "A";
-
-            return {
-              student,
-              status,
-              detected: isDetected,
-            };
-          }
-        );
-
-
-      setRows(
-        attendanceRows
+      const validGroupCodes = new Set(
+        groupStudents.map((student) =>
+          getLastFourDigits(student.student_id)
+        )
       );
 
+      const matchedCodes = rawCodes.filter((code) =>
+        validGroupCodes.has(code)
+      );
 
+      const detected = new Set(matchedCodes);
+      const uniqueMatchedCodes = Array.from(detected);
+
+      const attendanceRows: AttendanceRow[] = groupStudents.map(
+        (student): AttendanceRow => {
+          const attendanceCode = getLastFourDigits(student.student_id);
+          const isDetected = detected.has(attendanceCode);
+          const status: AttendanceStatus = isDetected ? "P" : "A";
+
+          return {
+            student,
+            status,
+            detected: isDetected,
+          };
+        }
+      );
+
+      setDetectedCodes(uniqueMatchedCodes);
+      setRows(attendanceRows);
       setVerified(true);
 
-
       notify(
-        `OCR completed. ${uniqueCodes.length} four-digit code(s) detected.`
+        `Attendance detected: ${uniqueMatchedCodes.length} Present, ${
+          groupStudents.length - uniqueMatchedCodes.length
+        } Absent.`
       );
-
-
     } catch (err) {
-
-      console.error(
-        "OCR error:",
-        err
-      );
-
-
+      console.error("OCR error:", err);
       showError(
-        err instanceof Error
-          ? err.message
-          : "OCR processing failed."
+        err instanceof Error ? err.message : "OCR processing failed."
       );
-
-
     } finally {
-
+      if (worker) {
+        try {
+          await worker.terminate();
+        } catch (terminateError) {
+          console.warn("Could not terminate OCR worker:", terminateError);
+        }
+      }
       setProcessing(false);
-
     }
   }
 
+  function toggleStatus(studentId: string) {
+    setRows((current) =>
+      current.map((row): AttendanceRow => {
+        if (row.student.id !== studentId) {
+          return row;
+        }
 
-  function toggleStatus(
-    studentId: string
-  ) {
+        const nextStatus: AttendanceStatus =
+          row.status === "P" ? "A" : "P";
 
-    setRows(
-      (current) =>
-        current.map(
-          (row) => {
-
-            if (
-              row.student.id !==
-              studentId
-            ) {
-              return row;
-            }
-
-
-            return {
-              ...row,
-
-              status:
-                row.status ===
-                "P"
-                  ? "A"
-                  : "P",
-            };
-          }
-        )
+        return {
+          ...row,
+          status: nextStatus,
+        };
+      })
     );
   }
 
-
   async function saveAttendance() {
-
     if (!rows.length) {
-
-      showError(
-        "Process the attendance photo first."
-      );
-
+      showError("Process the attendance photo first.");
       return;
     }
-
 
     if (!verified) {
-
-      showError(
-        "Verify attendance before saving."
-      );
-
+      showError("Verify attendance before saving.");
       return;
     }
 
+    if (!department || !batch || !group || !date) {
+      showError("Department, Batch, Group and Date are required.");
+      return;
+    }
 
-    /*
-     * Check existing session.
-     */
+    setSaving(true);
 
-    const {
-      data: existingSession,
-      error:
-        existingSessionError,
-    } =
-      await supabase
-        .from(
-          "attendance_sessions"
-        )
+    try {
+      /*
+       * A session belongs to Date + Department + Batch + Group.
+       * If the same attendance is saved again, existing records are replaced.
+       */
+      const {
+        data: existingSession,
+        error: existingSessionError,
+      } = await supabase
+        .from("attendance_sessions")
         .select("id")
-        .eq(
-          "attendance_date",
-          date
-        )
-        .eq(
-          "group_id",
-          group
-        )
+        .eq("attendance_date", date)
+        .eq("department_id", department)
+        .eq("batch_id", batch)
+        .eq("group_id", group)
         .maybeSingle();
 
-
-    if (
-      existingSessionError
-    ) {
-
-      showError(
-        existingSessionError.message
-      );
-
-      return;
-    }
-
-
-    let sessionId =
-      existingSession?.id ||
-      null;
-
-
-    /*
-     * Existing session
-     */
-
-    if (sessionId) {
-
-      const {
-        error:
-          deleteError,
-      } =
-        await supabase
-          .from(
-            "attendance_records"
-          )
-          .delete()
-          .eq(
-            "session_id",
-            sessionId
-          );
-
-
-      if (deleteError) {
-
-        showError(
-          deleteError.message
-        );
-
+      if (existingSessionError) {
+        showError(existingSessionError.message);
         return;
       }
 
-    } else {
+      let sessionId = existingSession?.id || null;
 
-      /*
-       * Create session.
-       */
+      if (sessionId) {
+        const { error: deleteError } = await supabase
+          .from("attendance_records")
+          .delete()
+          .eq("session_id", sessionId);
 
-      const {
-        data,
-        error,
-      } =
-        await supabase
-          .from(
-            "attendance_sessions"
-          )
+        if (deleteError) {
+          showError(deleteError.message);
+          return;
+        }
+
+        const { error: updateSessionError } = await supabase
+          .from("attendance_sessions")
+          .update({
+            source_file_name: file?.name || null,
+          })
+          .eq("id", sessionId);
+
+        if (updateSessionError) {
+          showError(updateSessionError.message);
+          return;
+        }
+      } else {
+        const { data, error } = await supabase
+          .from("attendance_sessions")
           .insert({
-            attendance_date:
-              date,
-
-            department_id:
-              department,
-
-            batch_id:
-              batch,
-
-            group_id:
-              group,
-
-            source_file_name:
-              file?.name ||
-              null,
-
-            created_by:
-              null,
+            attendance_date: date,
+            department_id: department,
+            batch_id: batch,
+            group_id: group,
+            source_file_name: file?.name || null,
+            created_by: null,
           })
           .select("id")
           .single();
 
+        if (error) {
+          showError(error.message);
+          return;
+        }
 
-      if (error) {
+        sessionId = data.id;
+      }
 
-        showError(
-          error.message
-        );
-
+      if (!sessionId) {
+        showError("Could not create attendance session.");
         return;
       }
 
+      const records = rows.map((row) => ({
+        session_id: sessionId as string,
+        student_id: row.student.id,
+        status: row.status,
+        detected_code: row.detected
+          ? getLastFourDigits(row.student.student_id)
+          : null,
+      }));
 
-      sessionId =
-        data.id;
-    }
-
-
-    if (!sessionId) {
-
-      showError(
-        "Could not create attendance session."
-      );
-
-      return;
-    }
-
-
-    /*
-     * Prepare records.
-     */
-
-    const records =
-      rows.map(
-        (row) => ({
-          session_id:
-            sessionId,
-
-          student_id:
-            row.student.id,
-
-          status:
-            row.status,
-
-          detected_code:
-            row.detected
-              ? row.student
-                  .attendance_code
-              : null,
-        })
-      );
-
-
-    /*
-     * Insert attendance records.
-     */
-
-    const {
-      error:
-        recordsError,
-    } =
-      await supabase
-        .from(
-          "attendance_records"
-        )
+      const { error: recordsError } = await supabase
+        .from("attendance_records")
         .insert(records);
 
+      if (recordsError) {
+        showError(recordsError.message);
+        return;
+      }
 
-    if (recordsError) {
+      const presentCount = rows.filter((row) => row.status === "P").length;
+      const absentCount = rows.filter((row) => row.status === "A").length;
 
-      showError(
-        recordsError.message
+      notify(
+        `Attendance saved successfully. Present: ${presentCount}, Absent: ${absentCount}.`
       );
 
-      return;
+      resetAttendance();
+      await onReload();
+    } catch (err) {
+      console.error("Save attendance error:", err);
+      showError(
+        err instanceof Error ? err.message : "Could not save attendance."
+      );
+    } finally {
+      setSaving(false);
     }
-
-
-    notify(
-      "Attendance saved successfully."
-    );
-
-
-    resetAttendance();
-
-    await onReload();
   }
 
+  const present = rows.filter((row) => row.status === "P").length;
+  const absent = rows.filter((row) => row.status === "A").length;
+  const total = rows.length;
+  const percentage = total ? ((present / total) * 100).toFixed(2) : "0.00";
 
-  const present =
-    rows.filter(
-      (row) =>
-        row.status === "P"
-    ).length;
-
-
-  const absent =
-    rows.filter(
-      (row) =>
-        row.status === "A"
-    ).length;
-
+  const selectedDepartmentName = departments.find(
+    (d) => d.id === department
+  )?.name;
+  const selectedBatchName = batches.find((b) => b.id === batch)?.name;
+  const selectedGroupName = groups.find((g) => g.id === group)?.name;
 
   return (
     <div className="page">
-
       <div className="panel">
-
         <div className="panel-header">
-
           <div>
-
-            <h2>
-              Attendance Input
-            </h2>
-
+            <h2>Attendance Input</h2>
             <p>
-              Upload a photo containing handwritten
-              last-four-digit student codes.
+              Upload a photo containing only the last 4 digits written by
+              students. Number found = Present; number not found = Absent.
             </p>
-
           </div>
-
           <CalendarCheck />
-
         </div>
 
-
         <div className="form-grid">
-
-          {/* DATE */}
-
           <div>
-
-            <label>
-              Date
-            </label>
-
+            <label>Date</label>
             <input
               type="date"
               value={date}
-              onChange={(e) =>
-                setDate(
-                  e.target.value
-                )
-              }
+              onChange={(e) => {
+                setDate(e.target.value);
+                resetAttendance();
+              }}
             />
-
           </div>
 
-
-          {/* DEPARTMENT */}
-
           <div>
-
-            <label>
-              Department
-            </label>
-
+            <label>Department</label>
             <select
               value={department}
               onChange={(e) => {
-
-                setDepartment(
-                  e.target.value
-                );
-
+                setDepartment(e.target.value);
                 setBatch("");
                 setGroup("");
-
                 resetAttendance();
-
               }}
             >
-
-              <option value="">
-                Select Department
-              </option>
-
+              <option value="">Select Department</option>
               {departments
-                .filter(
-                  (d) =>
-                    d.is_active
-                )
+                .filter((d) => d.is_active)
                 .map((d) => (
-
-                  <option
-                    key={d.id}
-                    value={d.id}
-                  >
+                  <option key={d.id} value={d.id}>
                     {d.name}
                   </option>
-
                 ))}
-
             </select>
-
           </div>
 
-
-          {/* BATCH */}
-
           <div>
-
-            <label>
-              Batch
-            </label>
-
+            <label>Batch</label>
             <select
               value={batch}
               onChange={(e) => {
-
-                setBatch(
-                  e.target.value
-                );
-
+                setBatch(e.target.value);
                 setGroup("");
-
                 resetAttendance();
-
               }}
             >
-
-              <option value="">
-                Select Batch
-              </option>
-
-              {filteredBatches.map(
-                (b) => (
-
-                  <option
-                    key={b.id}
-                    value={b.id}
-                  >
-                    {b.name}
-                  </option>
-
-                )
-              )}
-
+              <option value="">Select Batch</option>
+              {filteredBatches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
             </select>
-
           </div>
 
-
-          {/* GROUP */}
-
           <div>
-
-            <label>
-              Group
-            </label>
-
+            <label>Group</label>
             <select
               value={group}
               onChange={(e) => {
-
-                setGroup(
-                  e.target.value
-                );
-
+                setGroup(e.target.value);
                 resetAttendance();
-
               }}
             >
-
-              <option value="">
-                Select Group
-              </option>
-
-              {filteredGroups.map(
-                (g) => (
-
-                  <option
-                    key={g.id}
-                    value={g.id}
-                  >
-                    {g.name}
-                  </option>
-
-                )
-              )}
-
+              <option value="">Select Group</option>
+              {filteredGroups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
             </select>
-
           </div>
-
         </div>
 
-
-        {/* PHOTO */}
-
         <label className="photo-upload">
-
           <Upload size={30} />
-
-          <strong>
-
-            {file
-              ? file.name
-              : "Upload Attendance Photo"}
-
-          </strong>
-
-          <span>
-            Click to choose an image
-          </span>
-
-
+          <strong>{file ? file.name : "Upload Attendance Photo"}</strong>
+          <span>Click to choose an image</span>
           <input
             type="file"
             accept="image/*"
             hidden
             onChange={(e) => {
-
-              setFile(
-                e.target.files?.[0] ||
-                  null
-              );
-
+              setFile(e.target.files?.[0] || null);
+              setOcrText("");
+              setDetectedCodes([]);
               setRows([]);
-
               setVerified(false);
-
             }}
           />
-
         </label>
 
-
         <div className="button-row">
-
           <button
             className="primary-btn"
             onClick={processOCR}
-            disabled={processing}
+            disabled={processing || saving}
           >
-
             {processing ? (
-
               <>
-                <RefreshCw
-                  size={17}
-                  className="spin"
-                />
-
+                <RefreshCw size={17} className="spin" />
                 Reading Photo...
-
               </>
-
             ) : (
-
               <>
                 <Upload size={17} />
                 Read Attendance
               </>
-
             )}
-
           </button>
 
-
           {rows.length > 0 && (
-
             <button
               className="secondary-btn"
-              onClick={
-                saveAttendance
-              }
+              onClick={saveAttendance}
+              disabled={saving}
             >
-              <Save size={17} />
-              Verify & Save
+              {saving ? (
+                <>
+                  <RefreshCw size={17} className="spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save size={17} />
+                  Verify & Save
+                </>
+              )}
             </button>
-
           )}
 
+          {rows.length > 0 && (
+            <button
+              className="secondary-btn"
+              onClick={resetAttendance}
+              disabled={processing || saving}
+            >
+              Reset
+            </button>
+          )}
         </div>
-
       </div>
 
-
-      {/* ====================================================
-          VERIFICATION
-      ===================================================== */}
-
       {rows.length > 0 && (
-
         <div className="panel">
-
           <div className="panel-header">
-
             <div>
-
-              <h2>
-                Attendance Verification
-              </h2>
-
+              <h2>Attendance Verification</h2>
               <p>
-                Review OCR result before saving.
-                Click status to correct it.
+                {selectedDepartmentName || "-"} / {selectedBatchName || "-"} / Group {selectedGroupName || "-"} / {date}
               </p>
-
+              <p>
+                Rule: codes detected in the photo are Present. All other
+                students in the selected group are Absent. Click a status to
+                correct it manually before saving.
+              </p>
             </div>
-
 
             <div className="summary-pills">
-
-              <span className="present-pill">
-                Present: {present}
-              </span>
-
-              <span className="absent-pill">
-                Absent: {absent}
-              </span>
-
+              <span className="present-pill">Present: {present}</span>
+              <span className="absent-pill">Absent: {absent}</span>
+              <span>Held: {total}</span>
+              <span>Attendance: {percentage}%</span>
             </div>
-
           </div>
 
+          {detectedCodes.length > 0 && (
+            <div className="ocr-box">
+              <strong>Detected Student Codes</strong>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px" }}>
+                {detectedCodes.map((code) => (
+                  <span className="code-pill" key={code}>
+                    {code}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="table-wrap">
-
             <table>
-
               <thead>
-
                 <tr>
-
-                  <th>
-                    Student ID
-                  </th>
-
-                  <th>
-                    Name
-                  </th>
-
-                  <th>
-                    OCR Code
-                  </th>
-
-                  <th>
-                    Detected
-                  </th>
-
-                  <th>
-                    Status
-                  </th>
-
+                  <th>#</th>
+                  <th>Student ID</th>
+                  <th>Name</th>
+                  <th>Attendance Code</th>
+                  <th>Detected in Photo</th>
+                  <th>Status</th>
                 </tr>
-
               </thead>
-
-
               <tbody>
-
-                {rows.map(
-                  (row) => (
-
-                    <tr
-                      key={
-                        row.student.id
-                      }
-                    >
-
-                      <td>
-                        {
-                          row.student
-                            .student_id
+                {rows.map((row, index) => (
+                  <tr key={row.student.id}>
+                    <td>{index + 1}</td>
+                    <td>{row.student.student_id}</td>
+                    <td>{row.student.name}</td>
+                    <td>
+                      <span className="code-pill">
+                        {getLastFourDigits(row.student.student_id)}
+                      </span>
+                    </td>
+                    <td>
+                      {row.detected ? (
+                        <span className="status-present">YES</span>
+                      ) : (
+                        <span className="status-absent">NO</span>
+                      )}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className={
+                          row.status === "P"
+                            ? "status-button present"
+                            : "status-button absent"
                         }
-                      </td>
-
-                      <td>
-                        {
-                          row.student
-                            .name
-                        }
-                      </td>
-
-                      <td>
-
-                        <span className="code-pill">
-                          {
-                            row.student
-                              .attendance_code
-                          }
-                        </span>
-
-                      </td>
-
-                      <td>
-
-                        {row.detected ? (
-
-                          <span className="status-present">
-                            YES
-                          </span>
-
-                        ) : (
-
-                          <span className="status-absent">
-                            NO
-                          </span>
-
-                        )}
-
-                      </td>
-
-                      <td>
-
-                        <button
-                          className={
-                            row.status ===
-                            "P"
-                              ? "status-button present"
-                              : "status-button absent"
-                          }
-                          onClick={() =>
-                            toggleStatus(
-                              row.student
-                                .id
-                            )
-                          }
-                        >
-
-                          {row.status ===
-                          "P"
-                            ? "PRESENT"
-                            : "ABSENT"}
-
-                        </button>
-
-                      </td>
-
-                    </tr>
-
-                  )
-                )}
-
+                        onClick={() => toggleStatus(row.student.id)}
+                      >
+                        {row.status === "P" ? "PRESENT" : "ABSENT"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
-
             </table>
-
           </div>
-
 
           <div className="ocr-box">
-
-            <strong>
-              Raw OCR Text
-            </strong>
-
-            <pre>
-              {ocrText ||
-                "No OCR text"}
-            </pre>
-
+            <strong>Raw OCR Text</strong>
+            <pre>{ocrText || "No OCR text"}</pre>
           </div>
-
         </div>
-
       )}
-
     </div>
   );
 }
