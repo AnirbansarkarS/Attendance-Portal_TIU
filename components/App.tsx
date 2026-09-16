@@ -83,9 +83,11 @@ type Student = {
   created_at?: string;
 };
 
+type AttendanceStatus = "P" | "A";
+
 type AttendanceRow = {
   student: Student;
-  status: "P" | "A";
+  status: AttendanceStatus;
   detected: boolean;
 };
 
@@ -3239,7 +3241,7 @@ function AttendancePage({
                 student.attendance_code
               );
 
-            const status: AttendanceRow["status"] =
+            const status: AttendanceStatus =
               isDetected ? "P" : "A";
 
             return {
@@ -3304,12 +3306,14 @@ function AttendancePage({
             }
 
 
-            const nextStatus: AttendanceRow["status"] =
-              row.status === "P" ? "A" : "P";
-
             return {
               ...row,
-              status: nextStatus,
+
+              status:
+                row.status ===
+                "P"
+                  ? "A"
+                  : "P",
             };
           }
         )
