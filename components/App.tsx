@@ -3230,24 +3230,22 @@ function AttendancePage({
         );
 
 
-      const attendanceRows =
+      const attendanceRows: AttendanceRow[] =
         groupStudents.map(
-          (student) => {
+          (student): AttendanceRow => {
 
             const isDetected =
               detected.has(
                 student.attendance_code
               );
 
+            const status: AttendanceRow["status"] =
+              isDetected ? "P" : "A";
 
             return {
               student,
-              status:
-                isDetected
-                  ? "P"
-                  : "A",
-              detected:
-                isDetected,
+              status,
+              detected: isDetected,
             };
           }
         );
@@ -3306,14 +3304,12 @@ function AttendancePage({
             }
 
 
+            const nextStatus: AttendanceRow["status"] =
+              row.status === "P" ? "A" : "P";
+
             return {
               ...row,
-
-              status:
-                row.status ===
-                "P"
-                  ? "A"
-                  : "P",
+              status: nextStatus,
             };
           }
         )
