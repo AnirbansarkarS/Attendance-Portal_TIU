@@ -10,6 +10,7 @@ import {
 import { supabase } from "@/lib/supabase";
 
 import type { User } from "@supabase/supabase-js";
+import type { UserProfile } from "@/app/page";
 
 import { createWorker } from "tesseract.js";
 
@@ -32,6 +33,12 @@ import {
   Trash2,
   Upload,
   Users,
+  ShieldCheck,
+  ShieldAlert,
+  UserCheck,
+  UserX,
+  Crown,
+  Shield,
 } from "lucide-react";
 
 /* ============================================================
@@ -44,7 +51,8 @@ type Tab =
   | "students"
   | "attendance"
   | "reports"
-  | "marks";
+  | "marks"
+  | "admin";
 
 type Department = {
   id: string;
@@ -142,8 +150,12 @@ type ReportRecord = {
 
 export default function App({
   user,
+  userProfile,
+  onProfileUpdate,
 }: {
   user: User;
+  userProfile: UserProfile;
+  onProfileUpdate?: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
 
@@ -152,6 +164,9 @@ export default function App({
   const [groups, setGroups] = useState<StudentGroup[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
+  const [allProfiles, setAllProfiles] = useState<UserProfile[]>([]);
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>("all");
+
 
   const [loading, setLoading] = useState(true);
 
@@ -176,6 +191,35 @@ export default function App({
     }, 6000);
   }
 
+    async function loadProfiles() {
+    if (userProfile.role !== "super_admin") return;
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (data) {
+      setAllProfiles(data as UserProfile[]);
+    }
+  }
+
+  async function handleToggleRole(targetUserId: string, currentRole: string) {
+    const newRole = currentRole === "super_admin" ? "teacher" : "super_admin";
+    const { error } = await supabase
+      .from("profiles")
+      .update({ role: newRole })
+      .eq("id", targetUserId);
+
+    if (error) {
+      showError(error.message);
+    } else {
+      notify(`User role updated to ${newRole}.`);
+      await loadProfiles();
+      if (targetUserId === user.id && onProfileUpdate) {
+        onProfileUpdate();
+      }
+    }
+  }
+
   async function loadAll() {
     setLoading(true);
 
@@ -186,40 +230,35 @@ export default function App({
       studentsResult,
       assessmentsResult,
     ] = await Promise.all([
-      supabase
-        .from("departments")
-        .select("*")
-        .order("name", {
-          ascending: true,
-        }),
+      (() => {
+        let q = supabase.from("departments").select("*").order("name", { ascending: true });
+        if (userProfile.role === "super_admin" && selectedTeacherId !== "all") q = q.eq("user_id", selectedTeacherId);
+        return q;
+      })(),
 
-      supabase
-        .from("batches")
-        .select("*")
-        .order("name", {
-          ascending: true,
-        }),
+      (() => {
+        let q = supabase.from("batches").select("*").order("name", { ascending: true });
+        if (userProfile.role === "super_admin" && selectedTeacherId !== "all") q = q.eq("user_id", selectedTeacherId);
+        return q;
+      })(),
 
-      supabase
-        .from("student_groups")
-        .select("*")
-        .order("name", {
-          ascending: true,
-        }),
+      (() => {
+        let q = supabase.from("student_groups").select("*").order("name", { ascending: true });
+        if (userProfile.role === "super_admin" && selectedTeacherId !== "all") q = q.eq("user_id", selectedTeacherId);
+        return q;
+      })(),
 
-      supabase
-        .from("students")
-        .select("*")
-        .order("name", {
-          ascending: true,
-        }),
+      (() => {
+        let q = supabase.from("students").select("*").order("name", { ascending: true });
+        if (userProfile.role === "super_admin" && selectedTeacherId !== "all") q = q.eq("user_id", selectedTeacherId);
+        return q;
+      })(),
 
-      supabase
-        .from("assessments")
-        .select("*")
-        .order("created_at", {
-          ascending: false,
-        }),
+      (() => {
+        let q = supabase.from("assessments").select("*").order("created_at", { ascending: false });
+        if (userProfile.role === "super_admin" && selectedTeacherId !== "all") q = q.eq("user_id", selectedTeacherId);
+        return q;
+      })(),
     ]);
 
     if (departmentsResult.error) {
@@ -262,12 +301,13 @@ export default function App({
       (assessmentsResult.data as Assessment[]) || []
     );
 
+    if (userProfile.role === "super_admin") { await loadProfiles(); }
     setLoading(false);
   }
 
   useEffect(() => {
     loadAll();
-  }, []);
+  }, [selectedTeacherId]);
 
   async function logout() {
     await supabase.auth.signOut();
@@ -340,6 +380,15 @@ export default function App({
             onClick={() => setTab("marks")}
           />
 
+          {userProfile.role === "super_admin" && (
+            <NavButton
+              active={tab === "admin"}
+              icon={<ShieldCheck size={18} />}
+              label="Admin Panel"
+              onClick={() => setTab("admin")}
+            />
+          )}
+
         </nav>
 
 
@@ -355,10 +404,14 @@ export default function App({
 
             <div className="user-info">
 
-              <strong>Teacher</strong>
+              <strong>{userProfile.full_name || (userProfile.role === 'super_admin' ? 'Super Admin' : 'Teacher')}</strong>
 
-              <span>
+              <span className="user-email-text">
                 {user.email}
+              </span>
+
+              <span className={`role-badge ${userProfile.role === 'super_admin' ? 'badge-super-admin' : 'badge-teacher'}`}>
+                {userProfile.role === 'super_admin' ? '⚡ Super Admin' : '👨‍🏫 Teacher'}
               </span>
 
             </div>
@@ -389,6 +442,26 @@ export default function App({
 
           <div>
 
+            {userProfile.role === "super_admin" && (
+              <div className="admin-view-switcher">
+                <Shield size={14} />
+                <span>Filter Workspace Data: </span>
+                <select
+                  value={selectedTeacherId}
+                  onChange={(e) => {
+                    setSelectedTeacherId(e.target.value);
+                  }}
+                >
+                  <option value="all">🌐 All Teachers (System-Wide Data)</option>
+                  {allProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      👤 {p.email} ({p.role})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <h1>
               {tab === "dashboard" &&
                 "Dashboard"}
@@ -407,6 +480,9 @@ export default function App({
 
               {tab === "marks" &&
                 "Marks Management"}
+
+              {tab === "admin" &&
+                "User Management & System Control"}
             </h1>
 
             <p>
@@ -459,6 +535,7 @@ export default function App({
           <>
             {tab === "dashboard" && (
               <Dashboard
+                user={user}
                 departments={departments}
                 batches={batches}
                 groups={groups}
@@ -471,6 +548,7 @@ export default function App({
 
             {tab === "setup" && (
               <Setup
+                user={user}
                 departments={departments}
                 batches={batches}
                 groups={groups}
@@ -483,6 +561,7 @@ export default function App({
 
             {tab === "students" && (
               <StudentsPage
+                user={user}
                 departments={departments}
                 batches={batches}
                 groups={groups}
@@ -496,6 +575,7 @@ export default function App({
 
             {tab === "attendance" && (
               <AttendancePage
+                user={user}
                 departments={departments}
                 batches={batches}
                 groups={groups}
@@ -509,6 +589,7 @@ export default function App({
 
             {tab === "reports" && (
               <ReportsPage
+                user={user}
                 departments={departments}
                 batches={batches}
                 groups={groups}
@@ -520,6 +601,7 @@ export default function App({
 
             {tab === "marks" && (
               <MarksPage
+                user={user}
                 departments={departments}
                 batches={batches}
                 groups={groups}
@@ -528,6 +610,16 @@ export default function App({
                 onReload={loadAll}
                 notify={notify}
                 showError={showError}
+              />
+            )}
+
+            {tab === "admin" && userProfile.role === "super_admin" && (
+              <AdminPanel
+                allProfiles={allProfiles}
+                onToggleRole={handleToggleRole}
+                onReload={loadAll}
+                departments={departments}
+                students={students}
               />
             )}
           </>
@@ -580,6 +672,7 @@ function NavButton({
 ============================================================ */
 
 function Dashboard({
+  user,
   departments,
   batches,
   groups,
@@ -587,6 +680,7 @@ function Dashboard({
   assessments,
   onNavigate,
 }: {
+  user: User;
   departments: Department[];
   batches: Batch[];
   groups: StudentGroup[];
@@ -772,6 +866,7 @@ function QuickCard({
 ============================================================ */
 
 function Setup({
+  user,
   departments,
   batches,
   groups,
@@ -779,6 +874,7 @@ function Setup({
   notify,
   showError,
 }: {
+  user: User;
   departments: Department[];
   batches: Batch[];
   groups: StudentGroup[];
@@ -819,6 +915,7 @@ function Setup({
       await supabase
         .from("departments")
         .insert({
+          user_id: user.id,
           name: departmentName.trim(),
           code:
             departmentCode.trim() ||
@@ -857,6 +954,7 @@ function Setup({
       await supabase
         .from("batches")
         .insert({
+          user_id: user.id,
           department_id:
             batchDepartment,
           name: batchName.trim(),
@@ -893,6 +991,7 @@ function Setup({
       await supabase
         .from("student_groups")
         .insert({
+          user_id: user.id,
           batch_id: groupBatch,
           name: groupName.trim(),
         });
@@ -1310,6 +1409,7 @@ function Setup({
 ============================================================ */
 
 function StudentsPage({
+  user,
   departments,
   batches,
   groups,
@@ -1318,6 +1418,7 @@ function StudentsPage({
   notify,
   showError,
 }: {
+  user: User;
   departments: Department[];
   batches: Batch[];
   groups: StudentGroup[];
@@ -1465,6 +1566,7 @@ function StudentsPage({
       await supabase
         .from("students")
         .insert({
+          user_id: user.id,
           student_id:
             cleanStudentId,
 
@@ -3069,6 +3171,7 @@ function StudentsPage({
 ============================================================ */
 
 function AttendancePage({
+  user,
   departments,
   batches,
   groups,
@@ -3077,6 +3180,7 @@ function AttendancePage({
   notify,
   showError,
 }: {
+  user: User;
   departments: Department[];
   batches: Batch[];
   groups: StudentGroup[];
@@ -3337,6 +3441,7 @@ function AttendancePage({
         const { data, error } = await supabase
           .from("attendance_sessions")
           .insert({
+            user_id: user.id,
             attendance_date: date,
             department_id: department,
             batch_id: batch,
@@ -3361,6 +3466,7 @@ function AttendancePage({
       }
 
       const records = rows.map((row) => ({
+        user_id: user.id,
         session_id: sessionId as string,
         student_id: row.student.id,
         status: row.status,
@@ -3665,12 +3771,14 @@ function AttendancePage({
 ============================================================ */
 
 function ReportsPage({
+  user,
   departments,
   batches,
   groups,
   students,
   showError,
 }: {
+  user: User;
   departments: Department[];
   batches: Batch[];
   groups: StudentGroup[];
@@ -4326,6 +4434,7 @@ function ReportsPage({
 ============================================================ */
 
 function MarksPage({
+  user,
   departments,
   batches,
   groups,
@@ -4335,6 +4444,7 @@ function MarksPage({
   notify,
   showError,
 }: {
+  user: User;
   departments: Department[];
   batches: Batch[];
   groups: StudentGroup[];
@@ -4446,6 +4556,7 @@ function MarksPage({
       await supabase
         .from("assessments")
         .insert({
+          user_id: user.id,
           department_id:
             department,
 
@@ -4625,6 +4736,7 @@ function MarksPage({
 
 
           return {
+            user_id: user.id,
             assessment_id:
               selectedAssessment,
 
@@ -4639,6 +4751,7 @@ function MarksPage({
           (
             item
           ): item is {
+            user_id: string;
             assessment_id: string;
             student_id: string;
             marks: number;
@@ -5305,5 +5418,168 @@ function getLastFourDigits(
   return numbers.padStart(
     4,
     "0"
+  );
+}
+
+/* ============================================================
+   ADMIN PANEL COMPONENT
+============================================================ */
+
+function AdminPanel({
+  allProfiles,
+  onToggleRole,
+  onReload,
+  departments,
+  students,
+}: {
+  allProfiles: UserProfile[];
+  onToggleRole: (userId: string, currentRole: string) => void;
+  onReload: () => void;
+  departments: Department[];
+  students: Student[];
+}) {
+  const superAdminCount = allProfiles.filter((p) => p.role === "super_admin").length;
+  const teacherCount = allProfiles.filter((p) => p.role === "teacher").length;
+
+  return (
+    <div className="page admin-page">
+
+      <div className="metrics-grid">
+
+        <div className="metric-card">
+          <div className="metric-icon purple">
+            <Users size={22} />
+          </div>
+          <div>
+            <span>Total Registered Users</span>
+            <h3>{allProfiles.length}</h3>
+          </div>
+        </div>
+
+        <div className="metric-card">
+          <div className="metric-icon gold">
+            <Crown size={22} />
+          </div>
+          <div>
+            <span>Super Admins</span>
+            <h3>{superAdminCount}</h3>
+          </div>
+        </div>
+
+        <div className="metric-card">
+          <div className="metric-icon blue">
+            <UserCheck size={22} />
+          </div>
+          <div>
+            <span>Teachers</span>
+            <h3>{teacherCount}</h3>
+          </div>
+        </div>
+
+        <div className="metric-card">
+          <div className="metric-icon green">
+            <Database size={22} />
+          </div>
+          <div>
+            <span>Total System Students</span>
+            <h3>{students.length}</h3>
+          </div>
+        </div>
+
+      </div>
+
+      <div className="panel">
+
+        <div className="panel-header">
+          <div>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ShieldCheck size={20} className="text-primary" />
+              User Access & Role Management
+            </h3>
+            <p className="subtitle-text">
+              Manage system permissions. Super Admins can access all workspace data across all teachers.
+            </p>
+          </div>
+
+          <button className="secondary-btn" onClick={onReload}>
+            <RefreshCw size={15} /> Refresh List
+          </button>
+        </div>
+
+        <div className="table-wrapper">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>User Email</th>
+                <th>Full Name</th>
+                <th>Role</th>
+                <th>User ID</th>
+                <th>Role Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allProfiles.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="empty-cell">
+                    No users found.
+                  </td>
+                </tr>
+              ) : (
+                allProfiles.map((prof) => (
+                  <tr key={prof.id}>
+                    <td>
+                      <strong style={{ color: '#0f172a' }}>{prof.email}</strong>
+                    </td>
+                    <td>{prof.full_name || "-"}</td>
+                    <td>
+                      <span
+                        className={`role-badge ${
+                          prof.role === "super_admin"
+                            ? "badge-super-admin"
+                            : "badge-teacher"
+                        }`}
+                      >
+                        {prof.role === "super_admin" ? (
+                          <>
+                            <Crown size={13} /> Super Admin
+                          </>
+                        ) : (
+                          <>
+                            <UserCheck size={13} /> Teacher
+                          </>
+                        )}
+                      </span>
+                    </td>
+                    <td className="code-text" style={{ fontSize: '12px', color: '#64748b' }}>
+                      {prof.id}
+                    </td>
+                    <td>
+                      <button
+                        className={`action-btn small-btn ${
+                          prof.role === "super_admin" ? "btn-demote" : "btn-promote"
+                        }`}
+                        onClick={() => onToggleRole(prof.id, prof.role)}
+                      >
+                        {prof.role === "super_admin" ? (
+                          <>
+                            <UserX size={14} /> Demote to Teacher
+                          </>
+                        ) : (
+                          <>
+                            <Crown size={14} /> Promote to Super Admin
+                          </>
+                        )}
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+
+    </div>
   );
 }
