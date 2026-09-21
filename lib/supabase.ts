@@ -5,7 +5,15 @@ const supabaseUrl =
 const supabaseAnonKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
 
-export const supabase = createClient(
-  supabaseUrl,
-  supabaseAnonKey
-);
+if (
+  !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  supabaseUrl.includes("placeholder") ||
+  supabaseUrl.includes("YOUR_PROJECT")
+) {
+  console.warn(
+    "⚠️ Supabase environment variables are missing or unconfigured. Please create/update your .env.local file with NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
+  );
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+

@@ -21,35 +21,43 @@ export default function Auth() {
     setSuccess("");
     setLoading(true);
 
-    if (isSignUp) {
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          data: {
-            full_name: fullName.trim() || email.split("@")[0],
+    try {
+      if (isSignUp) {
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              full_name: fullName.trim() || email.split("@")[0],
+            },
           },
-        },
-      });
+        });
 
-      if (error) {
-        setError(error.message);
-      } else if (data?.user) {
-        setSuccess("Account created successfully! You can now sign in.");
-        setIsSignUp(false);
-      }
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
+        if (error) {
+          setError(error.message);
+        } else if (data?.user) {
+          setSuccess("Account created successfully! You can now sign in.");
+          setIsSignUp(false);
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
 
-      if (error) {
-        setError(error.message);
+        if (error) {
+          setError(error.message);
+        }
       }
+    } catch (err: any) {
+      setError(
+        err.message === "Failed to fetch"
+          ? "Unable to connect to Supabase. Please ensure your NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are correctly configured in .env.local."
+          : err.message || "An unexpected authentication error occurred."
+      );
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
   return (

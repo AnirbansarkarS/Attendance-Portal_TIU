@@ -286,4 +286,3 @@ drop policy if exists "workbook_meta_isolation" on public.workbook_meta;
 create policy "workbook_meta_isolation" on public.workbook_meta for all to authenticated
   using (user_id = auth.uid() or is_super_admin())
   with check (user_id = auth.uid() or is_super_admin());
-
