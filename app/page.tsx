@@ -40,7 +40,7 @@ export default function Page() {
         const defaultProfile: UserProfile = {
           id: currentUser.id,
           email: currentUser.email || "",
-          role: "teacher",
+          role: currentUser.user_metadata?.role || "teacher",
           status: "approved",
           full_name: currentUser.email?.split("@")[0] || "Teacher",
         };
@@ -53,7 +53,7 @@ export default function Page() {
       setProfile({
         id: currentUser.id,
         email: currentUser.email || "",
-        role: "teacher",
+        role: currentUser.user_metadata?.role || "teacher",
         status: "approved",
       });
     }
