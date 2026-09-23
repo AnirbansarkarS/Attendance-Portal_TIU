@@ -12,6 +12,11 @@ import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 import type { UserProfile } from "@/app/page";
 
+import AdminUserVerification from "./AdminUserVerification";
+import CoordinatorDashboard from "./CoordinatorDashboard";
+import TeacherDashboard from "./TeacherDashboard";
+import StudentDashboard from "./StudentDashboard";
+
 import { createWorker } from "tesseract.js";
 
 import * as XLSX from "xlsx";
@@ -343,8 +348,8 @@ export default function App({
           </div>
 
           <div>
-            <strong>Attendance Portal</strong>
-            <span>Academic System</span>
+            <strong>Dr. Campus</strong>
+            <span>Academic Platform</span>
           </div>
 
         </div>
@@ -554,24 +559,36 @@ export default function App({
 
           <>
             {tab === "dashboard" && (
-              <Dashboard
-                user={user}
-                departments={departments}
-                batches={batches}
-                groups={groups}
-                students={students}
-                assessments={assessments}
-                onNavigate={setTab}
-              />
+              <>
+                {userProfile.role === "teacher" ? (
+                  <TeacherDashboard userProfile={userProfile} onNavigateTab={(t: any) => setTab(t)} />
+                ) : userProfile.role === "student" ? (
+                  <StudentDashboard userProfile={userProfile} />
+                ) : userProfile.role === "coordinator" ? (
+                  <CoordinatorDashboard
+                    userProfile={userProfile}
+                    onReload={loadAll}
+                    notify={notify}
+                    showError={showError}
+                  />
+                ) : (
+                  <Dashboard
+                    user={user}
+                    departments={departments}
+                    batches={batches}
+                    groups={groups}
+                    students={students}
+                    assessments={assessments}
+                    onNavigate={setTab}
+                  />
+                )}
+              </>
             )}
 
 
             {tab === "setup" && (
-              <Setup
-                user={user}
-                departments={departments}
-                batches={batches}
-                groups={groups}
+              <CoordinatorDashboard
+                userProfile={userProfile}
                 onReload={loadAll}
                 notify={notify}
                 showError={showError}
@@ -634,12 +651,11 @@ export default function App({
             )}
 
             {tab === "admin" && userProfile.role === "super_admin" && (
-              <AdminPanel
-                allProfiles={allProfiles}
-                onToggleRole={handleToggleRole}
-                onReload={loadAll}
+              <AdminUserVerification
                 departments={departments}
-                students={students}
+                onReload={loadAll}
+                notify={notify}
+                showError={showError}
               />
             )}
           </>
