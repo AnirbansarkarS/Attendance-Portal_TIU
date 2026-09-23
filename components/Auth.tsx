@@ -9,6 +9,7 @@ export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [role, setRole] = useState("teacher");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -29,6 +30,7 @@ export default function Auth() {
           options: {
             data: {
               full_name: fullName.trim() || email.split("@")[0],
+              role: role,
             },
           },
         });
@@ -71,7 +73,7 @@ export default function Auth() {
 
         <p className="subtitle">
           {isSignUp
-            ? "Create Teacher Account"
+            ? "Create an Account"
             : "Smart Attendance & Academic Management"}
         </p>
 
@@ -96,13 +98,19 @@ export default function Auth() {
               setSuccess("");
             }}
           >
-            Register Teacher
+            Register
           </button>
         </div>
 
         <form onSubmit={handleSubmit}>
           {isSignUp && (
             <>
+              <label>I am a</label>
+              <select value={role} onChange={(e) => setRole(e.target.value)} style={{ marginBottom: "15px", padding: "10px", borderRadius: "8px", border: "1px solid var(--border)", width: "100%", background: "var(--bg-card)", color: "var(--text)" }}>
+                <option value="teacher">Teacher</option>
+                <option value="student">Student</option>
+              </select>
+
               <label>Full Name</label>
               <input
                 type="text"

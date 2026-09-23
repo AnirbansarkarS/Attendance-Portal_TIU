@@ -315,6 +315,20 @@ export default function App({
 
   return (
     <div className="app-shell">
+      <style>{`
+        :root {
+          --theme-primary: ${userProfile.role === 'teacher' ? '#450c3f' : userProfile.role === 'student' ? '#091540' : '#111827'};
+          --theme-bg: ${userProfile.role === 'teacher' ? '#f5fbda' : userProfile.role === 'student' ? '#abd2fa' : '#f5f7fb'};
+          --theme-accent: ${userProfile.role === 'teacher' ? '#b9d175' : userProfile.role === 'student' ? '#7692ff' : '#3b82f6'};
+          --theme-light: ${userProfile.role === 'teacher' ? '#d9efbd' : userProfile.role === 'student' ? '#1b2cc1' : '#dbeafe'};
+        }
+        .sidebar { background: var(--theme-primary) !important; }
+        .logo-circle { background: var(--theme-primary) !important; }
+        .primary-btn { background: var(--theme-primary) !important; }
+        body { background: var(--theme-bg) !important; }
+        .app-shell { background: var(--theme-bg) !important; }
+        .nav-menu button.active { background: rgba(255,255,255,0.15) !important; border-left-color: var(--theme-accent) !important; }
+      `}</style>
 
       {/* =====================================================
           SIDEBAR
@@ -345,31 +359,37 @@ export default function App({
             onClick={() => setTab("dashboard")}
           />
 
-          <NavButton
-            active={tab === "setup"}
-            icon={<Settings size={18} />}
-            label="Academic Setup"
-            onClick={() => setTab("setup")}
-          />
+          {(userProfile.role === "super_admin" || userProfile.role === "coordinator") && (
+            <NavButton
+              active={tab === "setup"}
+              icon={<Settings size={18} />}
+              label={userProfile.role === "super_admin" ? "Academic Structure" : "Subjects"}
+              onClick={() => setTab("setup")}
+            />
+          )}
 
-          <NavButton
-            active={tab === "students"}
-            icon={<Users size={18} />}
-            label="Students"
-            onClick={() => setTab("students")}
-          />
+          {userProfile.role !== "student" && (
+            <NavButton
+              active={tab === "students"}
+              icon={<Users size={18} />}
+              label="Students"
+              onClick={() => setTab("students")}
+            />
+          )}
 
-          <NavButton
-            active={tab === "attendance"}
-            icon={<CalendarCheck size={18} />}
-            label="Take Attendance"
-            onClick={() => setTab("attendance")}
-          />
+          {userProfile.role === "teacher" && (
+            <NavButton
+              active={tab === "attendance"}
+              icon={<CalendarCheck size={18} />}
+              label="Take Attendance"
+              onClick={() => setTab("attendance")}
+            />
+          )}
 
           <NavButton
             active={tab === "reports"}
             icon={<ClipboardList size={18} />}
-            label="Attendance Report"
+            label="Attendance"
             onClick={() => setTab("reports")}
           />
 
@@ -384,7 +404,7 @@ export default function App({
             <NavButton
               active={tab === "admin"}
               icon={<ShieldCheck size={18} />}
-              label="Admin Panel"
+              label="User Verification"
               onClick={() => setTab("admin")}
             />
           )}
@@ -404,14 +424,14 @@ export default function App({
 
             <div className="user-info">
 
-              <strong>{userProfile.full_name || (userProfile.role === 'super_admin' ? 'Super Admin' : 'Teacher')}</strong>
+              <strong>{userProfile.full_name || (userProfile.role === 'super_admin' ? 'Super Admin' : userProfile.role === 'coordinator' ? 'Coordinator' : userProfile.role === 'student' ? 'Student' : 'Teacher')}</strong>
 
               <span className="user-email-text">
                 {user.email}
               </span>
 
-              <span className={`role-badge ${userProfile.role === 'super_admin' ? 'badge-super-admin' : 'badge-teacher'}`}>
-                {userProfile.role === 'super_admin' ? '⚡ Super Admin' : '👨‍🏫 Teacher'}
+              <span className={`role-badge badge-${userProfile.role}`}>
+                {userProfile.role === 'super_admin' ? '⚡ Super Admin' : userProfile.role === 'coordinator' ? '👔 Coordinator' : userProfile.role === 'student' ? '🎓 Student' : '👨‍🏫 Teacher'}
               </span>
 
             </div>
