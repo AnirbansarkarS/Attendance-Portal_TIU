@@ -680,7 +680,7 @@ export default function App({
         )}
 
         <div className="copywrite-footer" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', marginTop: 'auto' }}>
-          Made by : Somnath Mapa, Anirban Sarkar, Soumabha Mahapatra, Debendranath Das
+          Software Developed by : Somnath Mapa, Anirban Sarkar, Soumabha Mahapatra, Debendranath Das
         </div>
       </main>
 
