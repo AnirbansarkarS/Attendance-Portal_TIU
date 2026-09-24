@@ -152,11 +152,11 @@ export default function StudentDashboard({
       <style>{`
         .student-dashboard { display: flex; flex-direction: column; gap: 24px; }
         .student-banner {
-          background: linear-gradient(135deg, #091540 0%, #1b2cc1 100%);
+          background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
           color: #ffffff;
-          padding: 28px;
+          padding: 32px 40px;
           border-radius: 16px;
-          box-shadow: 0 8px 24px rgba(9, 21, 64, 0.15);
+          box-shadow: 0 10px 30px rgba(15, 23, 42, 0.15);
           display: flex;
           justify-content: space-between;
           align-items: center;
@@ -165,15 +165,20 @@ export default function StudentDashboard({
         }
         .student-stats-row {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 16px;
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 20px;
         }
         .stat-card-st {
           background: #ffffff;
-          border-radius: 12px;
-          padding: 20px;
-          border: 1px solid #e5e7eb;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+          border-radius: 14px;
+          padding: 24px;
+          border: 1px solid #e2e8f0;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .stat-card-st:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
         }
         .subject-grid-st {
           display: grid;
@@ -224,6 +229,22 @@ export default function StudentDashboard({
           text-align: center;
           color: #6b7280;
         }
+        .stat-label {
+          font-size: 0.85rem;
+          color: #6b7280;
+          font-weight: 500;
+          letter-spacing: 0.3px;
+        }
+        .stat-value {
+          font-size: 2rem;
+          font-weight: 700;
+          margin-top: 6px;
+        }
+        .stat-sub {
+          font-size: 0.75rem;
+          color: #9ca3af;
+          margin-top: 4px;
+        }
       `}</style>
 
       {/* STUDENT WELCOME BANNER */}
@@ -244,28 +265,36 @@ export default function StudentDashboard({
 
       {/* STATS ROW */}
       <div className="student-stats-row">
-        <div className="stat-card-st">
-          <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Overall Attendance</div>
-          <div style={{ fontSize: "1.8rem", fontWeight: "700", color: overallAttendance >= 75 ? "#059669" : "#dc2626", marginTop: "4px" }}>
+        <div className="stat-card-st attendance-card">
+          <div className="stat-label">Overall Attendance</div>
+          <div className="stat-value" style={{ color: overallAttendance >= 75 ? "#059669" : "#dc2626" }}>
             {overallAttendance}%
           </div>
-          <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginTop: "2px" }}>Threshold: 75%</div>
+          <div className="stat-sub">Threshold: 75%</div>
         </div>
 
-        <div className="stat-card-st">
-          <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Enrolled Subjects</div>
-          <div style={{ fontSize: "1.8rem", fontWeight: "700", color: "#091540", marginTop: "4px" }}>
-            {enrolledSubjects.length}
+        <div className="stat-card-st marks-card">
+          <div className="stat-label">Average Marks</div>
+          <div className="stat-value" style={{ color: "#1b2cc1" }}>
+            82.5%
           </div>
-          <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginTop: "2px" }}>Active this semester</div>
+          <div className="stat-sub">Demo Stats: Top 15% in class</div>
         </div>
 
-        <div className="stat-card-st">
-          <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Today's Lectures</div>
-          <div style={{ fontSize: "1.8rem", fontWeight: "700", color: "#1b2cc1", marginTop: "4px" }}>
-            {todayClasses.length}
+        <div className="stat-card-st assignments-card">
+          <div className="stat-label">Pending Assignments</div>
+          <div className="stat-value" style={{ color: "#d97706" }}>
+            3
           </div>
-          <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginTop: "2px" }}>Scheduled for today</div>
+          <div className="stat-sub">Demo Stats: Due this week</div>
+        </div>
+
+        <div className="stat-card-st assessments-card">
+          <div className="stat-label">Assessments Taken</div>
+          <div className="stat-value" style={{ color: "#091540" }}>
+            12
+          </div>
+          <div className="stat-sub">Demo Stats: This semester</div>
         </div>
       </div>
 

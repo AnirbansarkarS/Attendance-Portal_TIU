@@ -639,6 +639,7 @@ export default function App({
             {tab === "marks" && (
               <MarksPage
                 user={user}
+                userProfile={userProfile}
                 departments={departments}
                 batches={batches}
                 groups={groups}
@@ -662,6 +663,9 @@ export default function App({
 
         )}
 
+        <div className="copywrite-footer" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', marginTop: 'auto' }}>
+          Made by : Somnath Mapa, Anirban Sarkar, Soumabha Mahapatra, Debendranath Das
+        </div>
       </main>
 
     </div>
@@ -4471,6 +4475,7 @@ function ReportsPage({
 
 function MarksPage({
   user,
+  userProfile,
   departments,
   batches,
   groups,
@@ -4481,6 +4486,7 @@ function MarksPage({
   showError,
 }: {
   user: User;
+  userProfile: UserProfile;
   departments: Department[];
   batches: Batch[];
   groups: StudentGroup[];
@@ -4914,9 +4920,10 @@ function MarksPage({
 
         {/* CREATE ASSESSMENT */}
 
-        <div className="panel">
+        {userProfile.role !== "student" && (
+          <div className="panel">
 
-          <div className="panel-header">
+            <div className="panel-header">
 
             <div>
 
@@ -5099,7 +5106,7 @@ function MarksPage({
           </button>
 
         </div>
-
+        )}
 
         {/* ASSESSMENTS */}
 
