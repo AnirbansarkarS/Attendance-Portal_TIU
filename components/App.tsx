@@ -16,6 +16,7 @@ import AdminUserVerification from "./AdminUserVerification";
 import CoordinatorDashboard from "./CoordinatorDashboard";
 import TeacherDashboard from "./TeacherDashboard";
 import StudentDashboard from "./StudentDashboard";
+import MyProfilePage from "./MyProfilePage";
 
 import { createWorker } from "tesseract.js";
 
@@ -57,7 +58,8 @@ type Tab =
   | "attendance"
   | "reports"
   | "marks"
-  | "admin";
+  | "admin"
+  | "profile";
 
 type Department = {
   id: string;
@@ -414,6 +416,13 @@ export default function App({
             />
           )}
 
+          <NavButton
+            active={tab === "profile"}
+            icon={<Settings size={18} />}
+            label="My Profile"
+            onClick={() => setTab("profile")}
+          />
+
         </nav>
 
 
@@ -657,6 +666,13 @@ export default function App({
                 onReload={loadAll}
                 notify={notify}
                 showError={showError}
+              />
+            )}
+
+            {tab === "profile" && (
+              <MyProfilePage
+                userProfile={userProfile}
+                onReload={loadAll}
               />
             )}
           </>
