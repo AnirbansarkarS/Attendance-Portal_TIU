@@ -18,7 +18,7 @@ import TeacherDashboard from "./TeacherDashboard";
 import StudentDashboard from "./StudentDashboard";
 import MyProfilePage from "./MyProfilePage";
 
-import { createWorker } from "tesseract.js";
+// OCR is now handled server-side via /api/ocr (Gemini Vision).
 
 import * as XLSX from "xlsx";
 
@@ -3341,17 +3341,28 @@ function AttendancePage({
     setRows([]);
     setDetectedCodes([]);
 
-    let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
-
     try {
-      worker = await createWorker("eng");
+      // Build multipart form data to send the image to the server-side
+      // Gemini OCR route. The API key is kept server-side only.
+      const formData = new FormData();
+      formData.append("image", file);
 
-      const result = await worker.recognize(file);
-      const text = result.data.text || "";
+      const response = await fetch("/api/ocr", {
+        method: "POST",
+        body: formData,
+      });
 
-      setOcrText(text);
+      const json = await response.json();
 
-      const rawCodes = extractFourDigitCodes(text);
+      if (!response.ok) {
+        throw new Error(json.error || "OCR API request failed.");
+      }
+
+      const rawText: string = json.raw ?? "";
+      setOcrText(rawText);
+
+      // The API already returns clean, validated 4-digit code strings.
+      const rawCodes: string[] = json.codes ?? [];
 
       /*
        * Only codes belonging to the currently selected group are relevant.
@@ -3400,13 +3411,6 @@ function AttendancePage({
         err instanceof Error ? err.message : "OCR processing failed."
       );
     } finally {
-      if (worker) {
-        try {
-          await worker.terminate();
-        } catch (terminateError) {
-          console.warn("Could not terminate OCR worker:", terminateError);
-        }
-      }
       setProcessing(false);
     }
   }
