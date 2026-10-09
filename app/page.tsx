@@ -67,16 +67,30 @@ export default function Page() {
     let mounted = true;
 
     async function loadUser() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
 
-      if (mounted) {
-        setUser(user);
-        if (user) {
-          await fetchProfile(user);
+        if (error) {
+          await supabase.auth.signOut().catch(() => {});
         }
-        setLoading(false);
+
+        if (mounted) {
+          const currentUser = error ? null : user;
+          setUser(currentUser);
+          if (currentUser) {
+            await fetchProfile(currentUser);
+          }
+          setLoading(false);
+        }
+      } catch (err) {
+        console.warn("Auth initialization warning:", err);
+        if (mounted) {
+          setUser(null);
+          setLoading(false);
+        }
       }
     }
 

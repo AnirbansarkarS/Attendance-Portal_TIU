@@ -55,6 +55,8 @@ type RoutineEntry = {
   room?: string;
 };
 
+type StudentGroup = { id: string; batch_id: string; name: string; is_active?: boolean; created_at?: string };
+
 type SubTab =
   | "overview"
   | "departments"
@@ -62,6 +64,7 @@ type SubTab =
   | "academic_years"
   | "semesters"
   | "batches"
+  | "groups"
   | "classes"
   | "subjects"
   | "assignments"
@@ -88,6 +91,7 @@ export default function CoordinatorDashboard({
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
+  const [groups, setGroups] = useState<StudentGroup[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [subjectOfferings, setSubjectOfferings] = useState<SubjectOffering[]>([]);
@@ -110,6 +114,9 @@ export default function CoordinatorDashboard({
 
   const [batchDeptId, setBatchDeptId] = useState("");
   const [batchName, setBatchName] = useState("2024-2028");
+
+  const [groupBatchId, setGroupBatchId] = useState("");
+  const [groupName, setGroupName] = useState("");
 
   const [classBatchId, setClassBatchId] = useState("");
   const [className, setClassName] = useState("CSE-A");
@@ -147,6 +154,7 @@ export default function CoordinatorDashboard({
         yearRes,
         semRes,
         batchRes,
+        groupRes,
         classRes,
         subjRes,
         offeringRes,
@@ -159,6 +167,7 @@ export default function CoordinatorDashboard({
         supabase.from("academic_years").select("*").order("name"),
         supabase.from("semesters").select("*").order("name"),
         supabase.from("batches").select("*").order("name"),
+        supabase.from("student_groups").select("*").order("name"),
         supabase.from("classes").select("*").order("name"),
         supabase.from("subjects").select("*").order("name"),
         supabase.from("subject_offerings").select("*"),
@@ -172,6 +181,7 @@ export default function CoordinatorDashboard({
       if (yearRes.data) setAcademicYears(yearRes.data as AcademicYear[]);
       if (semRes.data) setSemesters(semRes.data as Semester[]);
       if (batchRes.data) setBatches(batchRes.data as Batch[]);
+      if (groupRes.data) setGroups(groupRes.data as StudentGroup[]);
       if (classRes.data) setClasses(classRes.data as ClassItem[]);
       if (subjRes.data) setSubjects(subjRes.data as Subject[]);
       if (offeringRes.data) setSubjectOfferings(offeringRes.data as SubjectOffering[]);
@@ -244,6 +254,22 @@ export default function CoordinatorDashboard({
       notify?.("Batch created.");
       setBatchName("");
       loadAllData();
+      if (onReload) onReload();
+    }
+  }
+
+  async function createGroup() {
+    if (!groupName.trim() || !groupBatchId) {
+      showError?.("Batch and Group Name are required.");
+      return;
+    }
+    const { error } = await supabase.from("student_groups").insert([{ batch_id: groupBatchId, name: groupName.trim() }]);
+    if (error) showError?.(error.message);
+    else {
+      notify?.("Student Group created successfully.");
+      setGroupName("");
+      loadAllData();
+      if (onReload) onReload();
     }
   }
 
@@ -378,6 +404,9 @@ export default function CoordinatorDashboard({
         <button className={`subnav-btn ${subTab === "batches" ? "active" : ""}`} onClick={() => setSubTab("batches")}>
           👥 Batches ({batches.length})
         </button>
+        <button className={`subnav-btn ${subTab === "groups" ? "active" : ""}`} onClick={() => setSubTab("groups")}>
+          🗂️ Student Groups ({groups.length})
+        </button>
         <button className={`subnav-btn ${subTab === "classes" ? "active" : ""}`} onClick={() => setSubTab("classes")}>
           🏫 Classes ({classes.length})
         </button>
@@ -404,12 +433,13 @@ export default function CoordinatorDashboard({
             <div className="coord-card">
               <h3>Academic Workflow Summary</h3>
               <p style={{ fontSize: "0.875rem", color: "#6b7280", marginBottom: "20px" }}>
-                Construct and manage academic structures: Departments → Programs → Batches → Classes → Subjects → Subject Offerings.
+                Construct and manage academic structures: Departments → Programs → Batches → Groups → Classes → Subjects → Subject Offerings.
               </p>
               <div className="grid-list">
                 <div className="item-card"><div className="item-title">{departments.length} Departments</div></div>
                 <div className="item-card"><div className="item-title">{programs.length} Programs</div></div>
                 <div className="item-card"><div className="item-title">{batches.length} Batches</div></div>
+                <div className="item-card"><div className="item-title">{groups.length} Student Groups</div></div>
                 <div className="item-card"><div className="item-title">{classes.length} Classes</div></div>
                 <div className="item-card"><div className="item-title">{subjects.length} Subjects</div></div>
                 <div className="item-card"><div className="item-title">{subjectOfferings.length} Subject Offerings</div></div>
@@ -549,6 +579,65 @@ export default function CoordinatorDashboard({
                     <div className="item-title">{b.name}</div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* GROUPS TAB */}
+          {subTab === "groups" && (
+            <div className="coord-card">
+              <h3>Student Groups Setup</h3>
+              <p style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: "16px" }}>
+                Create student groups (e.g. Group A, Group B, Section 1) under batches to assign students during student records uploading.
+              </p>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Select Batch *</label>
+                  <select value={groupBatchId} onChange={(e) => setGroupBatchId(e.target.value)}>
+                    <option value="">-- Choose Batch --</option>
+                    {batches.map((b) => {
+                      const dept = departments.find((d) => d.id === b.department_id);
+                      return (
+                        <option key={b.id} value={b.id}>
+                          {b.name} {dept ? `(${dept.name})` : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Group Name *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Group A or Section 1"
+                    value={groupName}
+                    onChange={(e) => setGroupName(e.target.value)}
+                  />
+                </div>
+              </div>
+              <button className="primary-btn" onClick={createGroup}>
+                <Plus size={16} /> Create Group
+              </button>
+
+              <div className="grid-list" style={{ marginTop: "24px" }}>
+                {groups.length === 0 ? (
+                  <p style={{ color: "#9ca3af", fontStyle: "italic" }}>No student groups created yet.</p>
+                ) : (
+                  groups.map((g) => {
+                    const batch = batches.find((b) => b.id === g.batch_id);
+                    const dept = batch ? departments.find((d) => d.id === batch.department_id) : null;
+                    return (
+                      <div key={g.id} className="item-card">
+                        <button className="del-btn" title="Delete Group" onClick={() => deleteRecord("student_groups", g.id)}>
+                          <Trash2 size={16} />
+                        </button>
+                        <div className="item-title">Group {g.name}</div>
+                        <div className="item-sub">Batch: {batch?.name || "Unassigned"}</div>
+                        {dept && <div className="item-sub">Dept: {dept.name}</div>}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           )}

@@ -1598,71 +1598,61 @@ function StudentsPage({
   ---------------------------------------------------------- */
 
   async function addStudent() {
-
     if (
       !studentId.trim() ||
       !name.trim() ||
       !department ||
-      !batch ||
-      !group
+      !batch
     ) {
       showError(
-        "Student ID, Name, Department, Batch and Group are required."
+        "Student ID, Name, Department, and Batch are required."
       );
-
       return;
     }
 
+    let activeGroupId = group;
+    if (!activeGroupId) {
+      const existing = groups.find((g) => g.batch_id === batch && g.is_active);
+      if (existing) {
+        activeGroupId = existing.id;
+      } else {
+        const { data: newGrp, error: grpErr } = await supabase
+          .from("student_groups")
+          .insert({ user_id: user.id, batch_id: batch, name: "Group A" })
+          .select()
+          .single();
 
-    const cleanStudentId =
-      studentId.trim();
+        if (grpErr || !newGrp) {
+          showError("Please create a Student Group first in Academic Setup.");
+          return;
+        }
+        activeGroupId = newGrp.id;
+        await onReload();
+      }
+    }
 
+    const cleanStudentId = studentId.trim();
 
-    const { error } =
-      await supabase
-        .from("students")
-        .insert({
-          user_id: user.id,
-          student_id:
-            cleanStudentId,
-
-          name:
-            name.trim(),
-
-          slr:
-            slr.trim() || null,
-
-          department_id:
-            department,
-
-          batch_id:
-            batch,
-
-          group_id:
-            group,
-        });
-
+    const { error } = await supabase.from("students").insert({
+      user_id: user.id,
+      student_id: cleanStudentId,
+      name: name.trim(),
+      slr: slr.trim() || null,
+      department_id: department,
+      batch_id: batch,
+      group_id: activeGroupId,
+    });
 
     if (error) {
-
-      showError(
-        error.message
-      );
-
+      showError(error.message);
       return;
     }
-
 
     setStudentId("");
     setName("");
     setSlr("");
 
-
-    notify(
-      "Student added successfully."
-    );
-
-
+    notify("Student added successfully.");
     await onReload();
   }
 
@@ -1774,16 +1764,24 @@ function StudentsPage({
     }
 
 
-    if (!group) {
+    let defaultGroupId = group;
+    if (!defaultGroupId) {
+      const existing = groups.find((g) => g.batch_id === batch && g.is_active);
+      if (existing) {
+        defaultGroupId = existing.id;
+      } else {
+        const { data: newGrp, error: grpErr } = await supabase
+          .from("student_groups")
+          .insert({ user_id: user.id, batch_id: batch, name: "Group A" })
+          .select()
+          .single();
 
-      showError(
-        "Please select Group first."
-      );
-
-      e.target.value = "";
-      return;
+        if (!grpErr && newGrp) {
+          defaultGroupId = newGrp.id;
+          await onReload();
+        }
+      }
     }
-
 
     try {
 
@@ -1939,6 +1937,11 @@ function StudentsPage({
       const records:
         ImportStudent[] = [];
 
+      // Local cache of groups created on-the-fly
+      const localGroupsMap = new Map<string, string>();
+      groups.filter(g => g.batch_id === batch && g.is_active).forEach(g => {
+        localGroupsMap.set(g.name.toLowerCase(), g.id);
+      });
 
       for (
         const row
@@ -1996,6 +1999,38 @@ function StudentsPage({
             ]
           );
 
+        const studentGroupStr =
+          getExcelValue(
+            row,
+            [
+              "Group",
+              "Section",
+              "Student Group",
+              "Group Name",
+              "Batch Group",
+            ]
+          );
+
+        let rowGroupId = defaultGroupId || "";
+
+        if (studentGroupStr) {
+          const groupKey = studentGroupStr.trim().toLowerCase();
+          if (localGroupsMap.has(groupKey)) {
+            rowGroupId = localGroupsMap.get(groupKey)!;
+          } else {
+            // Auto create group from Excel row
+            const { data: newGrp } = await supabase
+              .from("student_groups")
+              .insert({ user_id: user.id, batch_id: batch, name: studentGroupStr.trim() })
+              .select()
+              .single();
+            if (newGrp) {
+              localGroupsMap.set(groupKey, newGrp.id);
+              rowGroupId = newGrp.id;
+            }
+          }
+        }
+
 
         /*
          * Ignore completely empty rows.
@@ -2033,11 +2068,6 @@ function StudentsPage({
             studentSlr.trim() ||
             null,
 
-          /*
-           * IMPORTANT:
-           * These come from the selected UI.
-           */
-
           department_id:
             department,
 
@@ -2045,7 +2075,7 @@ function StudentsPage({
             batch,
 
           group_id:
-            group,
+            rowGroupId,
         });
       }
 
@@ -2237,6 +2267,9 @@ function StudentsPage({
 
         SLR:
           "1",
+
+        Group:
+          "Group A",
       },
     ];
 
