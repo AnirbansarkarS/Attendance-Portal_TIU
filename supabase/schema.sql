@@ -32,13 +32,25 @@ $$;
 -- Trigger to automatically create profile record when user signs up
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  requested_role text;
+  assigned_role text;
 begin
+  requested_role := coalesce(new.raw_user_meta_data->>'role', 'student');
+
+  -- Strict role sanitization: Never trust raw user metadata for admin/coordinator roles
+  if requested_role in ('teacher', 'student') then
+    assigned_role := requested_role;
+  else
+    assigned_role := 'student';
+  end if;
+
   insert into public.profiles (id, email, role, status, full_name)
   values (
     new.id,
     new.email,
-    coalesce(new.raw_user_meta_data->>'role', 'teacher'),
-    'approved',
+    assigned_role,
+    'pending', -- New registrations require Super Admin approval
     coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1))
   )
   on conflict (id) do update
@@ -107,6 +119,7 @@ create table if not exists public.student_groups (
 create table if not exists public.students (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  profile_id uuid references public.profiles(id) on delete set null,
   student_id text unique not null,
   name text not null,
   slr text,
@@ -142,6 +155,8 @@ create table if not exists public.attendance_sessions (
   department_id uuid references public.departments(id) on delete set null,
   batch_id uuid references public.batches(id) on delete set null,
   group_id uuid references public.student_groups(id) on delete set null,
+  subject_offering_id uuid references public.subject_offerings(id) on delete set null,
+  class_id uuid references public.classes(id) on delete set null,
   created_at timestamptz default now()
 );
 
@@ -227,27 +242,23 @@ alter table public.workbook_meta enable row level security;
 
 -- Departments
 drop policy if exists "departments_isolation" on public.departments;
-create policy "departments_isolation" on public.departments for all to authenticated
-  using (user_id = auth.uid() or is_super_admin())
-  with check (user_id = auth.uid() or is_super_admin());
+create policy "Academic structure read access" on public.departments for select to authenticated using (true);
+create policy "Academic structure write access" on public.departments for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
 
 -- Batches
 drop policy if exists "batches_isolation" on public.batches;
-create policy "batches_isolation" on public.batches for all to authenticated
-  using (user_id = auth.uid() or is_super_admin())
-  with check (user_id = auth.uid() or is_super_admin());
+create policy "Academic structure read access" on public.batches for select to authenticated using (true);
+create policy "Academic structure write access" on public.batches for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
 
 -- Student Groups
 drop policy if exists "student_groups_isolation" on public.student_groups;
-create policy "student_groups_isolation" on public.student_groups for all to authenticated
-  using (user_id = auth.uid() or is_super_admin())
-  with check (user_id = auth.uid() or is_super_admin());
+create policy "Academic structure read access" on public.student_groups for select to authenticated using (true);
+create policy "Academic structure write access" on public.student_groups for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
 
 -- Students
 drop policy if exists "students_isolation" on public.students;
-create policy "students_isolation" on public.students for all to authenticated
-  using (user_id = auth.uid() or is_super_admin())
-  with check (user_id = auth.uid() or is_super_admin());
+create policy "Academic structure read access" on public.students for select to authenticated using (true);
+create policy "Academic structure write access" on public.students for all to authenticated using (is_super_admin() or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator'));
 
 -- Assessments
 drop policy if exists "assessments_isolation" on public.assessments;
@@ -417,13 +428,33 @@ drop policy if exists "Academic structure read access" on public.subjects;
 create policy "Academic structure read access" on public.subjects for select to authenticated using (true);
 
 drop policy if exists "Academic structure read access" on public.subject_offerings;
-create policy "Academic structure read access" on public.subject_offerings for select to authenticated using (true);
+create policy "Academic structure read access" on public.subject_offerings for select to authenticated using (
+  is_super_admin()
+  or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator')
+  or teacher_id = auth.uid()
+  or exists (
+    select 1 from public.class_enrollments ce
+    join public.students s on ce.legacy_student_id = s.id
+    where ce.class_id = subject_offerings.class_id
+    and s.profile_id = auth.uid()
+  )
+);
 
 drop policy if exists "Academic structure read access" on public.class_enrollments;
 create policy "Academic structure read access" on public.class_enrollments for select to authenticated using (true);
 
 drop policy if exists "Routines read access" on public.routines;
-create policy "Routines read access" on public.routines for select to authenticated using (true);
+create policy "Routines read access" on public.routines for select to authenticated using (
+  is_super_admin()
+  or exists (select 1 from public.profiles where id = auth.uid() and role = 'coordinator')
+  or teacher_id = auth.uid()
+  or exists (
+    select 1 from public.class_enrollments ce
+    join public.students s on ce.legacy_student_id = s.id
+    where ce.class_id = routines.class_id
+    and s.profile_id = auth.uid()
+  )
+);
 
 -- Coordinator and Super Admin Write Policies
 drop policy if exists "Academic structure write access" on public.programs;

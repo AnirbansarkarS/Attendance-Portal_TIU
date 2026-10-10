@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import type { UserProfile } from "@/app/page";
 import SubjectPage from "./SubjectPage";
+import CalendarTimetable, { RoutineEntry } from "./CalendarTimetable";
 import {
   GraduationCap,
   CalendarCheck,
@@ -25,13 +26,6 @@ type EnrolledSubject = {
   credits: number;
 };
 
-type TodayClass = {
-  id: string;
-  subject_name: string;
-  start_time: string;
-  end_time: string;
-  room: string;
-};
 
 export default function StudentDashboard({
   userProfile,
@@ -42,18 +36,30 @@ export default function StudentDashboard({
   const [semesterName, setSemesterName] = useState<string>("Semester 5");
   const [overallAttendance, setOverallAttendance] = useState<number>(100);
   const [enrolledSubjects, setEnrolledSubjects] = useState<EnrolledSubject[]>([]);
-  const [todayClasses, setTodayClasses] = useState<TodayClass[]>([]);
+  const [studentRoutines, setStudentRoutines] = useState<RoutineEntry[]>([]);
   const [selectedOfferingId, setSelectedOfferingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function loadStudentData() {
     setLoading(true);
     try {
-      // 1. Fetch student's class enrollment
+      // 1. Fetch student's institutional record
+      const { data: studentRecord } = await supabase
+        .from("students")
+        .select("id")
+        .eq("profile_id", userProfile.id)
+        .single();
+
+      if (!studentRecord) {
+         setLoading(false);
+         return; // User has no institutional record yet
+      }
+
+      // 1b. Fetch student's class enrollment using legacy_student_id
       const { data: enroll } = await supabase
         .from("class_enrollments")
         .select("class_id, classes(name)")
-        .eq("student_id", userProfile.id)
+        .eq("legacy_student_id", studentRecord.id)
         .single();
 
       if (enroll && enroll.classes) {
@@ -81,8 +87,7 @@ export default function StudentDashboard({
           setEnrolledSubjects(list);
         }
 
-        // 3. Fetch routine schedule for student's class
-        const dayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
+                // 3. Fetch all routine schedules for student's class
         const { data: routines } = await supabase
           .from("routines")
           .select(`
@@ -92,40 +97,40 @@ export default function StudentDashboard({
             end_time,
             room,
             subject_offerings (
-              subjects (name)
+              subjects (name),
+              profiles (full_name, email)
             )
           `)
-          .eq("class_id", classId)
-          .eq("day_of_week", dayName);
+          .eq("class_id", classId);
 
         if (routines) {
-          const classList: TodayClass[] = routines.map((r: any) => ({
+          const classList: RoutineEntry[] = routines.map((r: any) => ({
             id: r.id,
-            subject_name: r.subject_offerings?.subjects?.name || "Subject",
+            day_of_week: r.day_of_week,
             start_time: r.start_time,
             end_time: r.end_time,
-            room: r.room || "Room 101",
+            room: r.room || "TBA",
+            subject_name: r.subject_offerings?.subjects?.name || "Subject",
+            class_name: "My Class",
+            teacher_name: r.subject_offerings?.profiles?.full_name || r.subject_offerings?.profiles?.email || "Teacher",
           }));
-          setTodayClasses(classList);
+          setStudentRoutines(classList);
         }
       }
 
-      // 4. Calculate attendance percentage
-      const { count: totalSessions } = await supabase
+      // 4. Calculate overall attendance using institutional student record ID
+      // Query all attendance_records for this student, scoped to class offerings
+      const { data: allRecords } = await supabase
         .from("attendance_records")
-        .select("*", { count: "exact", head: true })
-        .eq("student_id", userProfile.id);
+        .select("status, session_id")
+        .eq("student_id", studentRecord.id);
 
-      const { count: presentSessions } = await supabase
-        .from("attendance_records")
-        .select("*", { count: "exact", head: true })
-        .eq("student_id", userProfile.id)
-        .eq("status", "P");
-
-      if (totalSessions && totalSessions > 0) {
-        setOverallAttendance(Math.round(((presentSessions || 0) / totalSessions) * 100));
+      if (allRecords && allRecords.length > 0) {
+        const total = allRecords.length;
+        const present = allRecords.filter((r: any) => r.status === "P").length;
+        setOverallAttendance(Math.round((present / total) * 100));
       } else {
-        setOverallAttendance(94); // Healthy default score
+        setOverallAttendance(100); // default when no sessions taken yet
       }
     } catch (err) {
       console.error("Error loading student dashboard:", err);
@@ -298,28 +303,9 @@ export default function StudentDashboard({
         </div>
       </div>
 
-      {/* TODAY'S CLASSES */}
-      <div className="today-card">
-        <div style={{ fontSize: "1.1rem", fontWeight: "700", color: "#111827", display: "flex", alignItems: "center", gap: "8px" }}>
-          <Clock size={18} color="#1b2cc1" /> TODAY'S SCHEDULE
-        </div>
-        {todayClasses.length === 0 ? (
-          <div style={{ color: "#6b7280", padding: "16px 0", fontSize: "0.9rem" }}>
-            No classes scheduled for today.
-          </div>
-        ) : (
-          todayClasses.map((tc) => (
-            <div key={tc.id} className="today-item">
-              <div>
-                <strong style={{ color: "#111827" }}>{tc.subject_name}</strong>
-                <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Location: {tc.room}</div>
-              </div>
-              <div style={{ fontWeight: "600", color: "#1b2cc1" }}>
-                {tc.start_time} - {tc.end_time}
-              </div>
-            </div>
-          ))
-        )}
+      {/* TIMETABLE / CALENDAR */}
+      <div style={{ marginTop: "32px" }}>
+        <CalendarTimetable routines={studentRoutines} role="student" />
       </div>
 
       {/* ENROLLED SUBJECTS */}
