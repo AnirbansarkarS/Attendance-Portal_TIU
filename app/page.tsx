@@ -6,13 +6,19 @@ import Auth from "@/components/Auth";
 import App from "@/components/App";
 import type { User } from "@supabase/supabase-js";
 
-export type UserRole = "super_admin" | "teacher";
+export type UserRole = "super_admin" | "coordinator" | "teacher" | "student";
+export type UserStatus = "pending" | "approved" | "rejected" | "suspended";
 
 export type UserProfile = {
   id: string;
   email: string;
   role: UserRole;
+  status: UserStatus;
   full_name?: string | null;
+  avatar_url?: string | null;
+  bio?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export default function Page() {
@@ -29,13 +35,17 @@ export default function Page() {
         .single();
 
       if (data) {
-        setProfile(data as UserProfile);
+        setProfile({
+          ...data,
+          status: data.status || "approved",
+        } as UserProfile);
       } else if (error) {
         // Fallback profile if record doesn't exist yet
         const defaultProfile: UserProfile = {
           id: currentUser.id,
           email: currentUser.email || "",
-          role: "teacher",
+          role: currentUser.user_metadata?.role || "teacher",
+          status: "approved",
           full_name: currentUser.email?.split("@")[0] || "Teacher",
         };
         // Try creating fallback profile
@@ -47,7 +57,8 @@ export default function Page() {
       setProfile({
         id: currentUser.id,
         email: currentUser.email || "",
-        role: "teacher",
+        role: currentUser.user_metadata?.role || "teacher",
+        status: "approved",
       });
     }
   }
@@ -56,16 +67,30 @@ export default function Page() {
     let mounted = true;
 
     async function loadUser() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
 
-      if (mounted) {
-        setUser(user);
-        if (user) {
-          await fetchProfile(user);
+        if (error) {
+          await supabase.auth.signOut().catch(() => {});
         }
-        setLoading(false);
+
+        if (mounted) {
+          const currentUser = error ? null : user;
+          setUser(currentUser);
+          if (currentUser) {
+            await fetchProfile(currentUser);
+          }
+          setLoading(false);
+        }
+      } catch (err) {
+        console.warn("Auth initialization warning:", err);
+        if (mounted) {
+          setUser(null);
+          setLoading(false);
+        }
       }
     }
 
@@ -100,6 +125,27 @@ export default function Page() {
 
   if (!user || !profile) {
     return <Auth />;
+  }
+
+  if (profile.status !== "approved" && profile.role !== "super_admin") {
+    return (
+      <div className="loading-page auth-page">
+        <div className="auth-card" style={{ textAlign: "center", padding: "40px" }}>
+           <h2>Account {profile.status === 'pending' ? 'Pending' : 'Suspended'}</h2>
+           <p style={{ marginTop: "10px", color: "var(--text-muted)" }}>
+             {profile.status === 'pending' 
+               ? "Your account is awaiting super admin verification. Please check back later." 
+               : "Your account is currently suspended. Please contact administration."}
+           </p>
+           <button 
+             onClick={() => supabase.auth.signOut()} 
+             className="primary-btn" 
+             style={{ marginTop: "20px", display: "inline-block" }}>
+             Sign Out
+           </button>
+        </div>
+      </div>
+    );
   }
 
   return <App user={user} userProfile={profile} onProfileUpdate={() => fetchProfile(user)} />;

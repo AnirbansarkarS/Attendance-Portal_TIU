@@ -12,7 +12,13 @@ import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 import type { UserProfile } from "@/app/page";
 
-import { createWorker } from "tesseract.js";
+import AdminUserVerification from "./AdminUserVerification";
+import CoordinatorDashboard from "./CoordinatorDashboard";
+import TeacherDashboard from "./TeacherDashboard";
+import StudentDashboard from "./StudentDashboard";
+import MyProfilePage from "./MyProfilePage";
+
+// OCR is now handled server-side via /api/ocr (Gemini Vision).
 
 import * as XLSX from "xlsx";
 
@@ -52,7 +58,8 @@ type Tab =
   | "attendance"
   | "reports"
   | "marks"
-  | "admin";
+  | "admin"
+  | "profile";
 
 type Department = {
   id: string;
@@ -119,6 +126,7 @@ type Mark = {
 };
 
 type ImportStudent = {
+  user_id?: string;
   student_id: string;
   name: string;
   slr: string | null;
@@ -315,6 +323,20 @@ export default function App({
 
   return (
     <div className="app-shell">
+      <style>{`
+        :root {
+          --theme-primary: ${userProfile.role === 'teacher' ? '#450c3f' : userProfile.role === 'student' ? '#091540' : '#111827'};
+          --theme-bg: ${userProfile.role === 'teacher' ? '#f5fbda' : userProfile.role === 'student' ? '#abd2fa' : '#f5f7fb'};
+          --theme-accent: ${userProfile.role === 'teacher' ? '#b9d175' : userProfile.role === 'student' ? '#7692ff' : '#3b82f6'};
+          --theme-light: ${userProfile.role === 'teacher' ? '#d9efbd' : userProfile.role === 'student' ? '#1b2cc1' : '#dbeafe'};
+        }
+        .sidebar { background: var(--theme-primary) !important; }
+        .logo-circle { background: var(--theme-primary) !important; }
+        .primary-btn { background: var(--theme-primary) !important; }
+        body { background: var(--theme-bg) !important; }
+        .app-shell { background: var(--theme-bg) !important; }
+        .nav-menu button.active { background: rgba(255,255,255,0.15) !important; border-left-color: var(--theme-accent) !important; }
+      `}</style>
 
       {/* =====================================================
           SIDEBAR
@@ -329,8 +351,8 @@ export default function App({
           </div>
 
           <div>
-            <strong>Attendance Portal</strong>
-            <span>Academic System</span>
+            <strong>Dr. Campus</strong>
+            <span>Academic Platform</span>
           </div>
 
         </div>
@@ -345,31 +367,37 @@ export default function App({
             onClick={() => setTab("dashboard")}
           />
 
-          <NavButton
-            active={tab === "setup"}
-            icon={<Settings size={18} />}
-            label="Academic Setup"
-            onClick={() => setTab("setup")}
-          />
+          {(userProfile.role === "super_admin" || userProfile.role === "coordinator") && (
+            <NavButton
+              active={tab === "setup"}
+              icon={<Settings size={18} />}
+              label={userProfile.role === "super_admin" ? "Academic Structure" : "Subjects"}
+              onClick={() => setTab("setup")}
+            />
+          )}
 
-          <NavButton
-            active={tab === "students"}
-            icon={<Users size={18} />}
-            label="Students"
-            onClick={() => setTab("students")}
-          />
+          {userProfile.role !== "student" && (
+            <NavButton
+              active={tab === "students"}
+              icon={<Users size={18} />}
+              label="Students"
+              onClick={() => setTab("students")}
+            />
+          )}
 
-          <NavButton
-            active={tab === "attendance"}
-            icon={<CalendarCheck size={18} />}
-            label="Take Attendance"
-            onClick={() => setTab("attendance")}
-          />
+          {userProfile.role === "teacher" && (
+            <NavButton
+              active={tab === "attendance"}
+              icon={<CalendarCheck size={18} />}
+              label="Take Attendance"
+              onClick={() => setTab("attendance")}
+            />
+          )}
 
           <NavButton
             active={tab === "reports"}
             icon={<ClipboardList size={18} />}
-            label="Attendance Report"
+            label="Attendance"
             onClick={() => setTab("reports")}
           />
 
@@ -384,10 +412,17 @@ export default function App({
             <NavButton
               active={tab === "admin"}
               icon={<ShieldCheck size={18} />}
-              label="Admin Panel"
+              label="User Verification"
               onClick={() => setTab("admin")}
             />
           )}
+
+          <NavButton
+            active={tab === "profile"}
+            icon={<Settings size={18} />}
+            label="My Profile"
+            onClick={() => setTab("profile")}
+          />
 
         </nav>
 
@@ -404,14 +439,14 @@ export default function App({
 
             <div className="user-info">
 
-              <strong>{userProfile.full_name || (userProfile.role === 'super_admin' ? 'Super Admin' : 'Teacher')}</strong>
+              <strong>{userProfile.full_name || (userProfile.role === 'super_admin' ? 'Super Admin' : userProfile.role === 'coordinator' ? 'Coordinator' : userProfile.role === 'student' ? 'Student' : 'Teacher')}</strong>
 
               <span className="user-email-text">
                 {user.email}
               </span>
 
-              <span className={`role-badge ${userProfile.role === 'super_admin' ? 'badge-super-admin' : 'badge-teacher'}`}>
-                {userProfile.role === 'super_admin' ? '⚡ Super Admin' : '👨‍🏫 Teacher'}
+              <span className={`role-badge badge-${userProfile.role}`}>
+                {userProfile.role === 'super_admin' ? '⚡ Super Admin' : userProfile.role === 'coordinator' ? '👔 Coordinator' : userProfile.role === 'student' ? '🎓 Student' : '👨‍🏫 Teacher'}
               </span>
 
             </div>
@@ -534,24 +569,36 @@ export default function App({
 
           <>
             {tab === "dashboard" && (
-              <Dashboard
-                user={user}
-                departments={departments}
-                batches={batches}
-                groups={groups}
-                students={students}
-                assessments={assessments}
-                onNavigate={setTab}
-              />
+              <>
+                {userProfile.role === "teacher" ? (
+                  <TeacherDashboard userProfile={userProfile} onNavigateTab={(t: any) => setTab(t)} />
+                ) : userProfile.role === "student" ? (
+                  <StudentDashboard userProfile={userProfile} />
+                ) : userProfile.role === "coordinator" ? (
+                  <CoordinatorDashboard
+                    userProfile={userProfile}
+                    onReload={loadAll}
+                    notify={notify}
+                    showError={showError}
+                  />
+                ) : (
+                  <Dashboard
+                    user={user}
+                    departments={departments}
+                    batches={batches}
+                    groups={groups}
+                    students={students}
+                    assessments={assessments}
+                    onNavigate={setTab}
+                  />
+                )}
+              </>
             )}
 
 
             {tab === "setup" && (
-              <Setup
-                user={user}
-                departments={departments}
-                batches={batches}
-                groups={groups}
+              <CoordinatorDashboard
+                userProfile={userProfile}
                 onReload={loadAll}
                 notify={notify}
                 showError={showError}
@@ -602,6 +649,7 @@ export default function App({
             {tab === "marks" && (
               <MarksPage
                 user={user}
+                userProfile={userProfile}
                 departments={departments}
                 batches={batches}
                 groups={groups}
@@ -614,18 +662,27 @@ export default function App({
             )}
 
             {tab === "admin" && userProfile.role === "super_admin" && (
-              <AdminPanel
-                allProfiles={allProfiles}
-                onToggleRole={handleToggleRole}
-                onReload={loadAll}
+              <AdminUserVerification
                 departments={departments}
-                students={students}
+                onReload={loadAll}
+                notify={notify}
+                showError={showError}
+              />
+            )}
+
+            {tab === "profile" && (
+              <MyProfilePage
+                userProfile={userProfile}
+                onReload={loadAll}
               />
             )}
           </>
 
         )}
 
+        <div className="copywrite-footer" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', marginTop: 'auto' }}>
+          Software Developed by : Somnath Mapa, Anirban Sarkar, Soumabha Mahapatra, Debendranath Das
+        </div>
       </main>
 
     </div>
@@ -1542,71 +1599,61 @@ function StudentsPage({
   ---------------------------------------------------------- */
 
   async function addStudent() {
-
     if (
       !studentId.trim() ||
       !name.trim() ||
       !department ||
-      !batch ||
-      !group
+      !batch
     ) {
       showError(
-        "Student ID, Name, Department, Batch and Group are required."
+        "Student ID, Name, Department, and Batch are required."
       );
-
       return;
     }
 
+    let activeGroupId = group;
+    if (!activeGroupId) {
+      const existing = groups.find((g) => g.batch_id === batch && g.is_active);
+      if (existing) {
+        activeGroupId = existing.id;
+      } else {
+        const { data: newGrp, error: grpErr } = await supabase
+          .from("student_groups")
+          .insert({ user_id: user.id, batch_id: batch, name: "Group A" })
+          .select()
+          .single();
 
-    const cleanStudentId =
-      studentId.trim();
+        if (grpErr || !newGrp) {
+          showError("Please create a Student Group first in Academic Setup.");
+          return;
+        }
+        activeGroupId = newGrp.id;
+        await onReload();
+      }
+    }
 
+    const cleanStudentId = studentId.trim();
 
-    const { error } =
-      await supabase
-        .from("students")
-        .insert({
-          user_id: user.id,
-          student_id:
-            cleanStudentId,
-
-          name:
-            name.trim(),
-
-          slr:
-            slr.trim() || null,
-
-          department_id:
-            department,
-
-          batch_id:
-            batch,
-
-          group_id:
-            group,
-        });
-
+    const { error } = await supabase.from("students").insert({
+      user_id: user.id,
+      student_id: cleanStudentId,
+      name: name.trim(),
+      slr: slr.trim() || null,
+      department_id: department,
+      batch_id: batch,
+      group_id: activeGroupId,
+    });
 
     if (error) {
-
-      showError(
-        error.message
-      );
-
+      showError(error.message);
       return;
     }
-
 
     setStudentId("");
     setName("");
     setSlr("");
 
-
-    notify(
-      "Student added successfully."
-    );
-
-
+    notify("Student added successfully.");
     await onReload();
   }
 
@@ -1718,16 +1765,24 @@ function StudentsPage({
     }
 
 
-    if (!group) {
+    let defaultGroupId = group;
+    if (!defaultGroupId) {
+      const existing = groups.find((g) => g.batch_id === batch && g.is_active);
+      if (existing) {
+        defaultGroupId = existing.id;
+      } else {
+        const { data: newGrp, error: grpErr } = await supabase
+          .from("student_groups")
+          .insert({ user_id: user.id, batch_id: batch, name: "Group A" })
+          .select()
+          .single();
 
-      showError(
-        "Please select Group first."
-      );
-
-      e.target.value = "";
-      return;
+        if (!grpErr && newGrp) {
+          defaultGroupId = newGrp.id;
+          await onReload();
+        }
+      }
     }
-
 
     try {
 
@@ -1883,6 +1938,11 @@ function StudentsPage({
       const records:
         ImportStudent[] = [];
 
+      // Local cache of groups created on-the-fly
+      const localGroupsMap = new Map<string, string>();
+      groups.filter(g => g.batch_id === batch && g.is_active).forEach(g => {
+        localGroupsMap.set(g.name.toLowerCase(), g.id);
+      });
 
       for (
         const row
@@ -1940,6 +2000,38 @@ function StudentsPage({
             ]
           );
 
+        const studentGroupStr =
+          getExcelValue(
+            row,
+            [
+              "Group",
+              "Section",
+              "Student Group",
+              "Group Name",
+              "Batch Group",
+            ]
+          );
+
+        let rowGroupId = defaultGroupId || "";
+
+        if (studentGroupStr) {
+          const groupKey = studentGroupStr.trim().toLowerCase();
+          if (localGroupsMap.has(groupKey)) {
+            rowGroupId = localGroupsMap.get(groupKey)!;
+          } else {
+            // Auto create group from Excel row
+            const { data: newGrp } = await supabase
+              .from("student_groups")
+              .insert({ user_id: user.id, batch_id: batch, name: studentGroupStr.trim() })
+              .select()
+              .single();
+            if (newGrp) {
+              localGroupsMap.set(groupKey, newGrp.id);
+              rowGroupId = newGrp.id;
+            }
+          }
+        }
+
 
         /*
          * Ignore completely empty rows.
@@ -1967,6 +2059,7 @@ function StudentsPage({
 
 
         records.push({
+          user_id: user.id,
           student_id:
             studentId.trim(),
 
@@ -1977,11 +2070,6 @@ function StudentsPage({
             studentSlr.trim() ||
             null,
 
-          /*
-           * IMPORTANT:
-           * These come from the selected UI.
-           */
-
           department_id:
             department,
 
@@ -1989,7 +2077,7 @@ function StudentsPage({
             batch,
 
           group_id:
-            group,
+            rowGroupId,
         });
       }
 
@@ -2181,6 +2269,9 @@ function StudentsPage({
 
         SLR:
           "1",
+
+        Group:
+          "Group A",
       },
     ];
 
@@ -2258,6 +2349,42 @@ function StudentsPage({
 
 
     await onReload();
+  }
+
+  async function deleteFilteredStudents() {
+    if (filteredStudents.length === 0) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete ${filteredStudents.length} student(s) currently shown in the list? This action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setImporting(true);
+    const studentIds = filteredStudents.map((s) => s.id);
+    const chunkSize = 100;
+    let deletedCount = 0;
+
+    try {
+      for (let i = 0; i < studentIds.length; i += chunkSize) {
+        const chunk = studentIds.slice(i, i + chunkSize);
+        const { error } = await supabase
+          .from("students")
+          .delete()
+          .in("id", chunk);
+
+        if (error) {
+          throw error;
+        }
+        deletedCount += chunk.length;
+      }
+      notify(`Successfully deleted ${deletedCount} student(s).`);
+      await onReload();
+    } catch (error: any) {
+      showError(error.message || "Failed to delete students.");
+    } finally {
+      setImporting(false);
+    }
   }
 
 
@@ -2558,6 +2685,19 @@ function StudentsPage({
               />
 
             </label>
+
+            {/* DELETE ALL FILTERED */}
+            {filteredStudents.length > 0 && (
+              <button
+                className="delete-btn"
+                onClick={deleteFilteredStudents}
+                disabled={importing}
+                style={{ marginLeft: "8px", background: "#fee2e2", color: "#dc2626", border: "1px solid #fecaca", padding: "6px 12px", borderRadius: "6px", display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "0.85rem", fontWeight: "500" }}
+              >
+                <Trash2 size={15} />
+                Delete Filtered
+              </button>
+            )}
 
           </div>
 
@@ -3221,7 +3361,7 @@ function AttendancePage({
       s.department_id === department &&
       s.batch_id === batch &&
       s.group_id === group &&
-      s.is_active
+      s.is_active !== false
   );
 
   function resetAttendance() {
@@ -3285,17 +3425,28 @@ function AttendancePage({
     setRows([]);
     setDetectedCodes([]);
 
-    let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
-
     try {
-      worker = await createWorker("eng");
+      // Build multipart form data to send the image to the server-side
+      // Gemini OCR route. The API key is kept server-side only.
+      const formData = new FormData();
+      formData.append("image", file);
 
-      const result = await worker.recognize(file);
-      const text = result.data.text || "";
+      const response = await fetch("/api/ocr", {
+        method: "POST",
+        body: formData,
+      });
 
-      setOcrText(text);
+      const json = await response.json();
 
-      const rawCodes = extractFourDigitCodes(text);
+      if (!response.ok) {
+        throw new Error(json.error || "OCR API request failed.");
+      }
+
+      const rawText: string = json.raw ?? "";
+      setOcrText(rawText);
+
+      // The API already returns clean, validated 4-digit code strings.
+      const rawCodes: string[] = json.codes ?? [];
 
       /*
        * Only codes belonging to the currently selected group are relevant.
@@ -3344,13 +3495,6 @@ function AttendancePage({
         err instanceof Error ? err.message : "OCR processing failed."
       );
     } finally {
-      if (worker) {
-        try {
-          await worker.terminate();
-        } catch (terminateError) {
-          console.warn("Could not terminate OCR worker:", terminateError);
-        }
-      }
       setProcessing(false);
     }
   }
@@ -4435,6 +4579,7 @@ function ReportsPage({
 
 function MarksPage({
   user,
+  userProfile,
   departments,
   batches,
   groups,
@@ -4445,6 +4590,7 @@ function MarksPage({
   showError,
 }: {
   user: User;
+  userProfile: UserProfile;
   departments: Department[];
   batches: Batch[];
   groups: StudentGroup[];
@@ -4878,9 +5024,10 @@ function MarksPage({
 
         {/* CREATE ASSESSMENT */}
 
-        <div className="panel">
+        {userProfile.role !== "student" && (
+          <div className="panel">
 
-          <div className="panel-header">
+            <div className="panel-header">
 
             <div>
 
@@ -5063,7 +5210,7 @@ function MarksPage({
           </button>
 
         </div>
-
+        )}
 
         {/* ASSESSMENTS */}
 
