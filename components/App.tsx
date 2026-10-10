@@ -126,6 +126,7 @@ type Mark = {
 };
 
 type ImportStudent = {
+  user_id?: string;
   student_id: string;
   name: string;
   slr: string | null;
