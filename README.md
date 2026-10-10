@@ -3,7 +3,6 @@
 A modern, Vercel/Netlify-ready **Next.js + Supabase** web application designed with **per-user data isolation (Multi-Tenancy)** and **Role-Based Access Control (RBAC)** for academic attendance and marks management.
 
 ---
-
 ## 🌟 Key Highlights & Security Architecture
 
 1. **User Separation & Data Isolation**:
