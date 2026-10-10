@@ -3,8 +3,7 @@
 A modern, production-ready **Next.js 14 + Supabase** academic web application featuring **per-user data isolation (Multi-Tenancy)**, **Role-Based Access Control (RBAC)**, **AI-powered OCR attendance verification (Google Gemini Vision)**, and **Excel workbook management**.
 
 ---
-
-## 🌟 Key Features & Highlights
+## 🌟 Key Highlights & Security Architecture
 
 ### 1. 👥 Multi-Role Academic Platform
 * **Super Admin**: System-wide administrative oversight, user management & verification (approve, reject, suspend, promote/demote user roles), and global workspace filtering across all registered teachers.
