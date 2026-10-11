@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Use Gemini 2.5 Flash as the primary vision model, with resilient fallbacks
-const PRIMARY_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const FALLBACK_MODELS = [
   "gemini-flash-latest",
   "gemini-3.5-flash",

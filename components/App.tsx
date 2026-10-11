@@ -2510,17 +2510,21 @@ function AttendancePage({
   const [saving, setSaving] = useState(false);
   const [verified, setVerified] = useState(false);
   const [offerings, setOfferings] = useState<any[]>([]);
+  const [allSubjects, setAllSubjects] = useState<any[]>([]);
   const [classEnrollments, setClassEnrollments] = useState<any[]>([]);
   const [selectedOffering, setSelectedOffering] = useState<string>("");
+  const [subjectFilter, setSubjectFilter] = useState<string>("");
 
   useEffect(() => {
     async function loadOfferings() {
-      const [offeringsRes, enrollmentsRes] = await Promise.all([
-        supabase.from("subject_offerings").select("id, class_id, subjects(name, code), classes(name)"),
-        supabase.from("class_enrollments").select("*")
+      const [offeringsRes, enrollmentsRes, subjectsRes] = await Promise.all([
+        supabase.from("subject_offerings").select("id, class_id, subject_id, subjects(name, code), classes(name)"),
+        supabase.from("class_enrollments").select("*"),
+        supabase.from("subjects").select("id, name, code").order("name"),
       ]);
       if (offeringsRes.data) setOfferings(offeringsRes.data);
       if (enrollmentsRes.data) setClassEnrollments(enrollmentsRes.data);
+      if (subjectsRes.data) setAllSubjects(subjectsRes.data);
     }
     loadOfferings();
   }, []);
@@ -2941,17 +2945,38 @@ function AttendancePage({
           </div>
 
           <div>
-            <label>Subject Offering (Optional)</label>
+            <label>Subject (Filter by Subject)</label>
             <select
-              value={selectedOffering}
-              onChange={(e) => setSelectedOffering(e.target.value)}
+              value={subjectFilter}
+              onChange={(e) => {
+                setSubjectFilter(e.target.value);
+                setSelectedOffering("");
+                resetAttendance();
+              }}
             >
-              <option value="">Select Subject Offering</option>
-              {offerings.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.subjects?.name} ({o.subjects?.code}) - {o.classes?.name}
+              <option value="">All Subjects</option>
+              {allSubjects.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}{s.code ? ` (${s.code})` : ""}
                 </option>
               ))}
+            </select>
+          </div>
+
+          <div>
+            <label>Subject Offering (Class Assignment)</label>
+            <select
+              value={selectedOffering}
+              onChange={(e) => { setSelectedOffering(e.target.value); resetAttendance(); }}
+            >
+              <option value="">Select Subject Offering</option>
+              {offerings
+                .filter((o) => !subjectFilter || o.subject_id === subjectFilter)
+                .map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.subjects?.name}{o.subjects?.code ? ` (${o.subjects.code})` : ""} → {o.classes?.name}
+                  </option>
+                ))}
             </select>
           </div>
         </div>
