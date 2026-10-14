@@ -7,14 +7,14 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export const maxDuration = 25; // seconds
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Primary: gemini-3.8-flash  |  Fallback: gemini-2.0-flash
+// Primary: gemini-3.5-flash  |  Fallback: gemini-3.5-flash-lite
 // ─────────────────────────────────────────────────────────────────────────────
 const MODELS_TO_TRY: string[] = (
   process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []
 ).concat([
-  "gemini-3.8-flash",      // 🥇 primary — latest & most capable
-  "gemini-2.0-flash",      // 🥈 fallback — stable & reliable
-  "gemini-2.0-flash-lite", // 🥉 last resort — lightweight
+  "gemini-3.5-flash",      // 🥇 primary — latest & most capable
+  "gemini-3.5-flash-lite", // 🥈 fallback — lightweight and current
+  "gemini-2.0-flash",      // 🥉 last resort — stable & reliable
 ]);
 
 /** Max ms to wait for one model call before giving up and trying the next. */
