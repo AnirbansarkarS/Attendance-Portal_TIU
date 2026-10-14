@@ -7,17 +7,14 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export const maxDuration = 25; // seconds
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Models confirmed available on the Gemini v1beta API (gemini-1.5-x is gone).
-// Ordered best → fallback.  Keep the list SHORT: every failed model burns time.
-// Worst case: 2 models × 2 keys × 12 s = 48 s, but we break on first success.
+// Primary: gemini-3.8-flash  |  Fallback: gemini-2.0-flash
 // ─────────────────────────────────────────────────────────────────────────────
 const MODELS_TO_TRY: string[] = (
   process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []
 ).concat([
-  "gemini-2.0-flash",  
-  "gemini-3.8-flash",     // ✅ stable — fastest & most reliable
-  "gemini-2.0-flash-lite",  // ✅ lighter variant, high availability
-  "gemini-2.5-flash",       // ✅ newer — try after 2.0 variants
+  "gemini-3.8-flash",      // 🥇 primary — latest & most capable
+  "gemini-2.0-flash",      // 🥈 fallback — stable & reliable
+  "gemini-2.0-flash-lite", // 🥉 last resort — lightweight
 ]);
 
 /** Max ms to wait for one model call before giving up and trying the next. */
