@@ -10,7 +10,6 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { supabase } from "@/lib/supabase";
 import type { UserProfile } from "@/app/page";
 import {
@@ -360,10 +359,9 @@ export default function AttendanceTaking({
     setUnmatchedCodes([]);
 
     try {
-      // ── Call Gemini directly from the browser ──────────────────────────────
-      // This bypasses the Netlify serverless function entirely, so there is
-      // no 10-second (or any other) function timeout to worry about.
-      // The browser can wait as long as the Gemini API needs.
+      // ── Call Gemini v1 REST API directly from the browser ────────────────
+      // Using the v1 endpoint (not v1beta) to avoid "model not found" 404s.
+      // Direct fetch bypasses the Netlify serverless function timeout entirely.
       const arrayBuffer = await ocrFile.arrayBuffer();
       const base64Image = btoa(
         new Uint8Array(arrayBuffer).reduce(
@@ -373,12 +371,14 @@ export default function AttendanceTaking({
       );
       const mimeType = ocrFile.type || "image/jpeg";
 
-      // Valid Gemini models ordered fastest → most capable
+      // Models to try in order of speed. The v1 endpoint supports all of these.
       const MODELS = [
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
+        "gemini-2.5-flash",
         "gemini-1.5-flash",
         "gemini-1.5-flash-8b",
+        "gemini-1.5-pro",
       ];
 
       const prompt = `You are an OCR assistant for an academic attendance system.
@@ -396,28 +396,51 @@ Example: {"codes": ["1234", "5678", "0042"]}
 If no codes are found, return: {"codes": []}
 Do not include any explanation, markdown, or extra text — only valid JSON.`;
 
-      const genAI = new GoogleGenerativeAI(apiKey);
+      const GEMINI_V1 = "https://generativelanguage.googleapis.com/v1/models";
+      const requestBody = {
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimeType, data: base64Image } },
+          ],
+        }],
+        generationConfig: { response_mime_type: "application/json" },
+      };
+
       let responseText = "";
       let usedModel = "";
       let lastErr: unknown = null;
 
       for (const modelName of MODELS) {
         try {
-          const model = genAI.getGenerativeModel({
-            model: modelName,
-            generationConfig: { responseMimeType: "application/json" },
-          });
-          const result = await model.generateContent([
-            prompt,
-            { inlineData: { mimeType, data: base64Image } },
-          ]);
-          responseText = result.response.text().trim();
+          const res = await fetch(
+            `${GEMINI_V1}/${modelName}:generateContent?key=${apiKey}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(requestBody),
+            }
+          );
+
+          if (!res.ok) {
+            const errBody = await res.text();
+            console.warn(`Gemini [${modelName}] HTTP ${res.status}:`, errBody.slice(0, 200));
+            lastErr = new Error(`HTTP ${res.status} from ${modelName}`);
+            continue; // try next model
+          }
+
+          const data = await res.json();
+          responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
+          if (!responseText) {
+            lastErr = new Error(`Empty response from ${modelName}`);
+            continue;
+          }
           usedModel = modelName;
           lastErr = null;
-          break;
+          break; // ✅ success
         } catch (e) {
           lastErr = e;
-          console.warn(`Gemini model [${modelName}] failed:`, e instanceof Error ? e.message : e);
+          console.warn(`Gemini [${modelName}] fetch error:`, e instanceof Error ? e.message : e);
         }
       }
 
