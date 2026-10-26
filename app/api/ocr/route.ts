@@ -5,15 +5,19 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export const maxDuration = 60;
 
 // Valid Gemini model names — ordered fastest → most capable
+// NOTE: Only use model IDs that actually exist in the Google AI API.
+// Invalid names cause the request to hang until timeout, burning the whole budget.
 const MODELS = [
   "gemini-3.8-flash",
   "gemini-3.7-flash",
   "gemini-3.5-flash",
   "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  
 ];
 
 // Per-model attempt timeout (ms) — leave room for retries within maxDuration
-const MODEL_TIMEOUT_MS = 25_000;
+const MODEL_TIMEOUT_MS = 20_000;
 
 export async function POST(request: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY;

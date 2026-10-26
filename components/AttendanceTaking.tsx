@@ -375,14 +375,13 @@ const [showStudentFace, setShowStudentFace] = useState(false);
       );
       const mimeType = ocrFile.type || "image/jpeg";
 
-      // Models to try in order of speed. The v1 endpoint supports all of these.
+      // Models to try in order of speed.
+      // Use v1beta which supports all current Gemini models.
       const MODELS = [
         "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite-preview-06-17",
         "gemini-1.5-flash",
         "gemini-1.5-flash-8b",
-        "gemini-1.5-pro",
       ];
 
       const prompt = `You are an OCR assistant for an academic attendance system.
@@ -400,7 +399,8 @@ Example: {"codes": ["1234", "5678", "0042"]}
 If no codes are found, return: {"codes": []}
 Do not include any explanation, markdown, or extra text — only valid JSON.`;
 
-      const GEMINI_V1 = "https://generativelanguage.googleapis.com/v1/models";
+      // v1beta has the broadest model support
+      const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
       const requestBody = {
         contents: [{
           parts: [
@@ -418,7 +418,7 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
       for (const modelName of MODELS) {
         try {
           const res = await fetch(
-            `${GEMINI_V1}/${modelName}:generateContent?key=${apiKey}`,
+            `${GEMINI_BASE}/${modelName}:generateContent?key=${apiKey}`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -433,7 +433,17 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
             continue; // try next model
           }
 
-          const data = await res.json();
+          // Safe JSON parse — a 504/HTML response causes SyntaxError otherwise
+          const rawBody = await res.text();
+          let data: any;
+          try {
+            data = JSON.parse(rawBody);
+          } catch {
+            console.warn(`Gemini [${modelName}] non-JSON response:`, rawBody.slice(0, 200));
+            lastErr = new Error(`Non-JSON response from ${modelName}`);
+            continue;
+          }
+
           responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
           if (!responseText) {
             lastErr = new Error(`Empty response from ${modelName}`);
