@@ -11,6 +11,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import StudentAttendanceView from "./StudentAttendanceView";
+
 import type { UserProfile } from "@/app/page";
 import {
   Upload, RefreshCw, Save, CheckCircle, XCircle, AlertTriangle,
@@ -98,6 +100,8 @@ export default function AttendanceTaking({
   // Loading/status flags
   const [loadingStudents, setLoadingStudents] = useState(true);
   const [savingAttendance, setSavingAttendance] = useState(false);
+const [showStudentFace, setShowStudentFace] = useState(false);
+
   const [statusMsg, setStatusMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
 
   // OCR-specific
@@ -626,6 +630,9 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
       flash("err", err instanceof Error ? err.message : "Failed to save attendance.");
     } finally {
       setSavingAttendance(false);
+// Ensure student view is hidden on error
+setShowStudentFace(false);
+
     }
   }
 
@@ -664,7 +671,13 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  if (showStudentFace) {
   return (
+    <StudentAttendanceView offeringId={offeringId} userProfile={userProfile} />
+  );
+}
+
+return (
     <div className="at-container">
       <style>{`
         .at-container { display: flex; flex-direction: column; gap: 20px; }
