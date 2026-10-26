@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { supabase } from "@/lib/supabase";
 import type { UserProfile } from "@/app/page";
 import {
@@ -347,71 +348,106 @@ export default function AttendanceTaking({
       return;
     }
 
+    const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    if (!apiKey) {
+      flash("err", "OCR service not configured. NEXT_PUBLIC_GEMINI_API_KEY is missing.");
+      return;
+    }
+
     setOcrProcessing(true);
     setOcrDone(false);
     setDetectedCodes([]);
     setUnmatchedCodes([]);
 
     try {
-      const formData = new FormData();
-      formData.append("image", ocrFile);
+      // ── Call Gemini directly from the browser ──────────────────────────────
+      // This bypasses the Netlify serverless function entirely, so there is
+      // no 10-second (or any other) function timeout to worry about.
+      // The browser can wait as long as the Gemini API needs.
+      const arrayBuffer = await ocrFile.arrayBuffer();
+      const base64Image = btoa(
+        new Uint8Array(arrayBuffer).reduce(
+          (data, byte) => data + String.fromCharCode(byte),
+          ""
+        )
+      );
+      const mimeType = ocrFile.type || "image/jpeg";
 
-      // 55 s client timeout — slightly under the server's 60 s maxDuration so
-      // the server gets a chance to respond before the browser gives up.
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 55_000);
+      // Valid Gemini models ordered fastest → most capable
+      const MODELS = [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+      ];
 
-      let response: Response;
+      const prompt = `You are an OCR assistant for an academic attendance system.
+Your task is to extract ALL 4-digit numeric codes written on this attendance sheet image.
+
+Rules:
+- Look for handwritten or printed 4-digit numbers (e.g., 1234, 5678, 0023).
+- These codes represent the last 4 digits of student enrollment IDs.
+- Common OCR confusions to correct: O→0, o→0, I→1, l→1, Z→2, S→5, G→6, B→8.
+- Ignore any 4-digit number that looks like a year (1900–2100).
+- Ignore single isolated letters, names, or non-numeric content.
+
+Return ONLY a JSON object with a single key "codes" containing an array of 4-digit string codes.
+Example: {"codes": ["1234", "5678", "0042"]}
+If no codes are found, return: {"codes": []}
+Do not include any explanation, markdown, or extra text — only valid JSON.`;
+
+      const genAI = new GoogleGenerativeAI(apiKey);
+      let responseText = "";
+      let usedModel = "";
+      let lastErr: unknown = null;
+
+      for (const modelName of MODELS) {
+        try {
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            generationConfig: { responseMimeType: "application/json" },
+          });
+          const result = await model.generateContent([
+            prompt,
+            { inlineData: { mimeType, data: base64Image } },
+          ]);
+          responseText = result.response.text().trim();
+          usedModel = modelName;
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          console.warn(`Gemini model [${modelName}] failed:`, e instanceof Error ? e.message : e);
+        }
+      }
+
+      if (!responseText) {
+        const msg = lastErr instanceof Error ? lastErr.message : "All Gemini models failed.";
+        throw new Error(`OCR failed: ${msg}`);
+      }
+
+      console.log(`OCR used model: ${usedModel}`);
+
+      // Strip markdown code fences if the model wrapped the JSON
+      const jsonText = responseText
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/```$/i, "")
+        .trim();
+
+      let parsed: { codes: string[] };
       try {
-        response = await fetch("/api/ocr", {
-          method: "POST",
-          body: formData,
-          signal: controller.signal,
-        });
-      } catch (fetchErr: any) {
-        if (fetchErr?.name === "AbortError") {
-          flash("err", "OCR is taking too long. Try a smaller / clearer image and retry.");
-        } else {
-          flash("err", "Network error communicating with OCR service.");
-        }
-        setOcrProcessing(false);
-        return;
-      } finally {
-        clearTimeout(timeout);
+        parsed = JSON.parse(jsonText);
+      } catch {
+        // Fallback: extract codes from raw text via local normalization
+        parsed = { codes: [] };
       }
 
-      // Guard against HTML error pages (504 gateway timeout, Netlify error pages, etc.)
-      // which would crash JSON.parse with the misleading "Unexpected token '<'" error.
-      const contentType = response.headers.get("content-type") ?? "";
-      if (!contentType.includes("application/json")) {
-        const statusHint =
-          response.status === 504
-            ? "The OCR request timed out on the server (504). Try a smaller image."
-            : response.status === 502
-            ? "Bad gateway — the OCR server could not be reached. Please retry."
-            : `OCR server returned an unexpected response (HTTP ${response.status}).`;
-        flash("err", statusHint);
-        setOcrProcessing(false);
-        return;
-      }
-
-      const json = await response.json();
-
-      if (!response.ok) {
-        if (response.status === 500 && json.error?.includes("GEMINI_API_KEY")) {
-          flash("err", "OCR service not configured. Ask your administrator to set GEMINI_API_KEY.");
-        } else {
-          flash("err", json.error || "OCR API request failed.");
-        }
-        setOcrProcessing(false);
-        return;
-      }
-
-      const rawText: string = json.raw ?? "";
+      const rawText = responseText;
       setOcrText(rawText);
 
       // Merge API codes with local normalization as fallback
-      const apiCodes: string[] = (json.codes ?? []).filter(
+      const apiCodes: string[] = (parsed.codes ?? []).filter(
         (c: string) => /^\d{4}$/.test(c)
       );
       const localCodes = extractAndNormalizeCodes(rawText);
