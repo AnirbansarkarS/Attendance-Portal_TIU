@@ -356,8 +356,10 @@ export default function AttendanceTaking({
       const formData = new FormData();
       formData.append("image", ocrFile);
 
+      // 55 s client timeout — slightly under the server's 60 s maxDuration so
+      // the server gets a chance to respond before the browser gives up.
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      const timeout = setTimeout(() => controller.abort(), 55_000);
 
       let response: Response;
       try {
@@ -368,7 +370,7 @@ export default function AttendanceTaking({
         });
       } catch (fetchErr: any) {
         if (fetchErr?.name === "AbortError") {
-          flash("err", "OCR request timed out. Please try again with a clearer image.");
+          flash("err", "OCR is taking too long. Try a smaller / clearer image and retry.");
         } else {
           flash("err", "Network error communicating with OCR service.");
         }
@@ -376,6 +378,21 @@ export default function AttendanceTaking({
         return;
       } finally {
         clearTimeout(timeout);
+      }
+
+      // Guard against HTML error pages (504 gateway timeout, Netlify error pages, etc.)
+      // which would crash JSON.parse with the misleading "Unexpected token '<'" error.
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        const statusHint =
+          response.status === 504
+            ? "The OCR request timed out on the server (504). Try a smaller image."
+            : response.status === 502
+            ? "Bad gateway — the OCR server could not be reached. Please retry."
+            : `OCR server returned an unexpected response (HTTP ${response.status}).`;
+        flash("err", statusHint);
+        setOcrProcessing(false);
+        return;
       }
 
       const json = await response.json();
