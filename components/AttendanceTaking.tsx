@@ -11,8 +11,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import StudentAttendanceView from "./StudentAttendanceView";
-
 import type { UserProfile } from "@/app/page";
 import {
   Upload, RefreshCw, Save, CheckCircle, XCircle, AlertTriangle,
@@ -100,8 +98,6 @@ export default function AttendanceTaking({
   // Loading/status flags
   const [loadingStudents, setLoadingStudents] = useState(true);
   const [savingAttendance, setSavingAttendance] = useState(false);
-const [showStudentFace, setShowStudentFace] = useState(false);
-
   const [statusMsg, setStatusMsg] = useState<{ type: "ok" | "err" | "info"; text: string } | null>(null);
 
   // OCR-specific
@@ -375,13 +371,12 @@ const [showStudentFace, setShowStudentFace] = useState(false);
       );
       const mimeType = ocrFile.type || "image/jpeg";
 
-      // Models to try in order of speed.
-      // Use v1beta which supports all current Gemini models.
+      // Models to try in order of speed. The v1 endpoint supports all of these.
       const MODELS = [
+        "gemini-2.5-flash",
         "gemini-2.0-flash",
-        "gemini-2.5-flash-lite-preview-06-17",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
+        "gemini-2.0-flash-lite",
+        "gemini-2.5-pro",
       ];
 
       const prompt = `You are an OCR assistant for an academic attendance system.
@@ -399,8 +394,7 @@ Example: {"codes": ["1234", "5678", "0042"]}
 If no codes are found, return: {"codes": []}
 Do not include any explanation, markdown, or extra text — only valid JSON.`;
 
-      // v1beta has the broadest model support
-      const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+      const GEMINI_V1 = "https://generativelanguage.googleapis.com/v1/models";
       const requestBody = {
         contents: [{
           parts: [
@@ -418,7 +412,7 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
       for (const modelName of MODELS) {
         try {
           const res = await fetch(
-            `${GEMINI_BASE}/${modelName}:generateContent?key=${apiKey}`,
+            `${GEMINI_V1}/${modelName}:generateContent?key=${apiKey}`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -433,17 +427,7 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
             continue; // try next model
           }
 
-          // Safe JSON parse — a 504/HTML response causes SyntaxError otherwise
-          const rawBody = await res.text();
-          let data: any;
-          try {
-            data = JSON.parse(rawBody);
-          } catch {
-            console.warn(`Gemini [${modelName}] non-JSON response:`, rawBody.slice(0, 200));
-            lastErr = new Error(`Non-JSON response from ${modelName}`);
-            continue;
-          }
-
+          const data = await res.json();
           responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
           if (!responseText) {
             lastErr = new Error(`Empty response from ${modelName}`);
@@ -640,9 +624,6 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
       flash("err", err instanceof Error ? err.message : "Failed to save attendance.");
     } finally {
       setSavingAttendance(false);
-// Ensure student view is hidden on error
-setShowStudentFace(false);
-
     }
   }
 
@@ -681,13 +662,7 @@ setShowStudentFace(false);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  if (showStudentFace) {
   return (
-    <StudentAttendanceView offeringId={offeringId} userProfile={userProfile} />
-  );
-}
-
-return (
     <div className="at-container">
       <style>{`
         .at-container { display: flex; flex-direction: column; gap: 20px; }

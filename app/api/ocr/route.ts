@@ -1,23 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// ── Netlify / Vercel: raise the serverless function timeout to 60 s ──────────
-export const maxDuration = 60;
+// Netlify serverless function timeout: keep route under the platform limit.
+export const maxDuration = 45;
 
-// Valid Gemini model names — ordered fastest → most capable
-// NOTE: Only use model IDs that actually exist in the Google AI API.
-// Invalid names cause the request to hang until timeout, burning the whole budget.
+// Valid Gemini model IDs for the Generative Language API.
+// Avoid 3.x IDs and other unsupported model names; those cause request failures
+// and eventually the Netlify function to time out.
 const MODELS = [
-  "gemini-3.8-flash",
-  "gemini-3.7-flash",
-  "gemini-3.5-flash",
   "gemini-2.5-flash",
   "gemini-2.0-flash",
-  
+  "gemini-2.0-flash-lite",
 ];
 
-// Per-model attempt timeout (ms) — leave room for retries within maxDuration
-const MODEL_TIMEOUT_MS = 20_000;
+// Keep each model attempt short enough that the whole OCR request can finish
+// inside Netlify's serverless limits before the frontend gets a 504 HTML page.
+const MODEL_TIMEOUT_MS = 12_000;
 
 export async function POST(request: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -54,8 +52,6 @@ export async function POST(request: NextRequest) {
   const mimeType = imageFile.type || "image/jpeg";
 
   const genAI = new GoogleGenerativeAI(apiKey);
-
-  // Also try the fallback key if one is configured
   const fallbackKey = process.env.GEMINI_API_KEY_FALLBACK;
   const clients: GoogleGenerativeAI[] = [genAI];
   if (fallbackKey && fallbackKey !== apiKey) {
@@ -83,7 +79,6 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
   let usedModel = "";
   let lastError: unknown = null;
 
-  // Try every (client × model) combination until one succeeds
   outer: for (const client of clients) {
     for (const modelName of MODELS) {
       try {
@@ -94,12 +89,8 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
           },
         });
 
-        // Race the Gemini call against a per-attempt timeout
-        const abortController = new AbortController();
-        const timer = setTimeout(
-          () => abortController.abort(),
-          MODEL_TIMEOUT_MS
-        );
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
 
         try {
           const result = await Promise.race([
@@ -107,11 +98,11 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
               prompt,
               { inlineData: { mimeType, data: base64Image } },
             ]),
-            new Promise<never>((_, reject) =>
-              abortController.signal.addEventListener("abort", () =>
-                reject(new Error(`Model ${modelName} timed out after ${MODEL_TIMEOUT_MS / 1000}s`))
-              )
-            ),
+            new Promise<never>((_, reject) => {
+              controller.signal.addEventListener("abort", () => {
+                reject(new Error(`Model ${modelName} timed out after ${MODEL_TIMEOUT_MS / 1000}s`));
+              });
+            }),
           ]);
 
           responseText = (result as Awaited<ReturnType<typeof model.generateContent>>)
@@ -119,10 +110,9 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
             .trim();
           usedModel = modelName;
           lastError = null;
-          clearTimeout(timer);
-          break outer; // ✅ success
+          break outer;
         } finally {
-          clearTimeout(timer);
+          clearTimeout(timeout);
         }
       } catch (err: unknown) {
         lastError = err;
@@ -142,7 +132,6 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
     );
   }
 
-  // Strip markdown code fences if the model wrapped the JSON
   const jsonText = responseText
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
