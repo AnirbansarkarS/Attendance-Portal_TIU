@@ -47,7 +47,6 @@ import {
   Shield,
   CheckCircle,
   AlertCircle,
-  AlertTriangle,
   Search,
   X,
 } from "lucide-react";
