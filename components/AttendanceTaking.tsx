@@ -371,12 +371,11 @@ export default function AttendanceTaking({
       );
       const mimeType = ocrFile.type || "image/jpeg";
 
-      // Models to try in order of speed. The v1 endpoint supports all of these.
+      // Models to try in order of speed.
       const MODELS = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
         "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-2.5-pro",
       ];
 
       const prompt = `You are an OCR assistant for an academic attendance system.
@@ -394,7 +393,7 @@ Example: {"codes": ["1234", "5678", "0042"]}
 If no codes are found, return: {"codes": []}
 Do not include any explanation, markdown, or extra text — only valid JSON.`;
 
-      const GEMINI_V1 = "https://generativelanguage.googleapis.com/v1/models";
+      const GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models";
       const requestBody = {
         contents: [{
           parts: [
@@ -412,7 +411,7 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
       for (const modelName of MODELS) {
         try {
           const res = await fetch(
-            `${GEMINI_V1}/${modelName}:generateContent?key=${apiKey}`,
+            `${GEMINI_API}/${modelName}:generateContent?key=${apiKey}`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },

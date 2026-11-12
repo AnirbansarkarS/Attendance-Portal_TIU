@@ -5,12 +5,11 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export const maxDuration = 45;
 
 // Valid Gemini model IDs for the Generative Language API.
-// Avoid 3.x IDs and other unsupported model names; those cause request failures
-// and eventually the Netlify function to time out.
+// Prioritize fast, high-accuracy flash models.
 const MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.5-flash",
   "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-2.0-flash-lite",
 ];
 
 // Keep each model attempt short enough that the whole OCR request can finish
