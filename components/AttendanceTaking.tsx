@@ -42,7 +42,7 @@ type SavedSession = {
   id: string;
   attendance_date: string;
   created_at: string;
-  source_file_name: string | null;
+  source_file_name?: string | null;
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -211,7 +211,7 @@ export default function AttendanceTaking({
 
       const { data } = await supabase
         .from("attendance_sessions")
-        .select("id, attendance_date, created_at, source_file_name")
+        .select("id, attendance_date, created_at")
         .eq("subject_offering_id", offeringId)
         .eq("attendance_date", date)
         .maybeSingle();
@@ -238,7 +238,7 @@ export default function AttendanceTaking({
     async function loadPastSessions() {
       const { data } = await supabase
         .from("attendance_sessions")
-        .select("id, attendance_date, created_at, source_file_name")
+        .select("id, attendance_date, created_at")
         .eq("subject_offering_id", offeringId)
         .order("attendance_date", { ascending: false });
       setPastSessions(data || []);
@@ -256,7 +256,7 @@ export default function AttendanceTaking({
   async function loadSessionRecordsIntoRows(sessionId: string) {
     const { data: records } = await supabase
       .from("attendance_records")
-      .select("student_id, status, detected_code, updated_at")
+      .select("student_id, status, detected_code, created_at")
       .eq("session_id", sessionId);
 
     if (!records) return;
@@ -280,7 +280,7 @@ export default function AttendanceTaking({
     setViewingSessionId(sessionId);
     const { data } = await supabase
       .from("attendance_records")
-      .select("student_id, status, detected_code, updated_at, students(name, student_id)")
+      .select("student_id, status, detected_code, created_at, students(name, student_id)")
       .eq("session_id", sessionId);
     setSessionRecords(data || []);
   }
@@ -546,13 +546,6 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
           .delete()
           .eq("session_id", sessionId);
         if (delErr) throw new Error("Failed to clear old records: " + delErr.message);
-
-        await supabase
-          .from("attendance_sessions")
-          .update({
-            source_file_name: ocrFile?.name ?? existingSession.source_file_name,
-          })
-          .eq("id", sessionId);
       } else {
         // Create new session
         const { data: newSession, error: sessErr } = await supabase
@@ -562,8 +555,6 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
             attendance_date: date,
             subject_offering_id: offeringId,
             class_id: classId,
-            source_file_name: ocrFile?.name ?? null,
-            created_by: userProfile.id,
           })
           .select("id")
           .single();
@@ -586,8 +577,6 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
         student_id: row.student.student_id,
         status: row.status,
         detected_code: row.detectedByOCR && !row.modified ? effectiveCode(row.student) : null,
-        updated_at: new Date().toISOString(),
-        updated_by: userProfile.id,
       }));
 
       const { error: recErr } = await supabase.from("attendance_records").insert(records);
@@ -614,7 +603,7 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
       // Refresh past sessions list
       const { data: updated } = await supabase
         .from("attendance_sessions")
-        .select("id, attendance_date, created_at, source_file_name")
+        .select("id, attendance_date, created_at")
         .eq("subject_offering_id", offeringId)
         .order("attendance_date", { ascending: false });
       setPastSessions(updated || []);

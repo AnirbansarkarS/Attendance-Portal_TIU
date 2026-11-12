@@ -17,14 +17,17 @@ const MODELS = [
 const MODEL_TIMEOUT_MS = 12_000;
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  try {
+    const apiKey =
+      process.env.GEMINI_API_KEY ||
+      process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "GEMINI_API_KEY is not configured on the server." },
-      { status: 500 }
-    );
-  }
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "GEMINI_API_KEY is not configured on the server." },
+        { status: 500 }
+      );
+    }
 
   let formData: FormData;
   try {
@@ -158,4 +161,12 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
     .filter((c: string) => /^\d{4}$/.test(c));
 
   return NextResponse.json({ codes, raw: responseText, model: usedModel });
+  } catch (err: unknown) {
+    console.error("Unhandled error in /api/ocr:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json(
+      { error: `OCR server error: ${message}`, codes: [] },
+      { status: 500 }
+    );
+  }
 }
