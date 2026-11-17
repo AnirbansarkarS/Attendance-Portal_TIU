@@ -441,9 +441,26 @@ Do not include any explanation, markdown, or extra text — only valid JSON.`;
         }
       }
 
-      if (!responseText) {
-        const msg = lastErr instanceof Error ? lastErr.message : "All Gemini models failed.";
-        throw new Error(`OCR failed: ${msg}`);
+      // ── Safe JSON parsing ─────────────────────────────────────────────────
+      // response.json() will throw "Unexpected end of JSON input" if the
+      // server returns an empty body or an HTML error page (e.g. Netlify 500).
+      // We read as text first, then parse manually so we can show a clear error.
+      let json: any;
+      try {
+        const rawBody = await response.text();
+        if (!rawBody || rawBody.trim() === "") {
+          throw new Error("Server returned an empty response.");
+        }
+        json = JSON.parse(rawBody);
+      } catch (parseErr: any) {
+        flash(
+          "err",
+          response.ok
+            ? `OCR service returned an unreadable response: ${parseErr.message}`
+            : `OCR service error (HTTP ${response.status}). Please try again.`
+        );
+        setOcrProcessing(false);
+        return;
       }
 
       console.log(`OCR used model: ${usedModel}`);
