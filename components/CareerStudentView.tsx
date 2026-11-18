@@ -44,7 +44,8 @@ export type Opportunity = {
   target_batches?: string[];
   min_cgpa?: number;
   min_attendance?: number;
-  status: "draft" | "open" | "closed" | "archived";
+  status: "draft" | "published" | "open" | "closed" | "archived";
+  created_by?: string;
   created_at: string;
 };
 
