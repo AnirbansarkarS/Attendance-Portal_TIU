@@ -38,6 +38,9 @@ import {
   Filter,
   RefreshCw,
   Copy,
+  GraduationCap,
+  Check,
+  ShieldCheck,
 } from "lucide-react";
 import type { Opportunity, Application } from "./CareerStudentView";
 
@@ -806,7 +809,7 @@ export default function CareerAdminView({
 }: CareerAdminViewProps) {
   const isCoordinator = userProfile.role === "coordinator";
 
-  const [activeTab, setActiveTab] = useState<"opportunities" | "ats" | "analytics">("opportunities");
+  const [activeTab, setActiveTab] = useState<"opportunities" | "ats" | "analytics" | "verification">("opportunities");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -825,6 +828,30 @@ export default function CareerAdminView({
   const [atsOppFilter, setAtsOppFilter] = useState("all");
   const [atsStatusFilter, setAtsStatusFilter] = useState("all");
   const [atsSearch, setAtsSearch] = useState("");
+
+  /* candidate details modal */
+  const [candidateApp, setCandidateApp] = useState<any | null>(null);
+  const [candidateModalOpen, setCandidateModalOpen] = useState(false);
+
+  /* verification & sgpa */
+  const [verificationProfiles, setVerificationProfiles] = useState<any[]>([]);
+  const [verificationLoading, setVerificationLoading] = useState(false);
+  const [showOnlyPending, setShowOnlyPending] = useState(true);
+  const [verificationSearch, setVerificationSearch] = useState("");
+
+  /* sgpa manager */
+  const [selectedStudentForSgpa, setSelectedStudentForSgpa] = useState<any | null>(null);
+  const [sgpaRecords, setSgpaRecords] = useState<any[]>([]);
+  const [sgpaForm, setSgpaForm] = useState({
+    semester_no: 1,
+    semester_name: "Semester 1",
+    sgpa: "",
+    cgpa: "",
+    backlogs: "0",
+  });
+  const [savingSgpa, setSavingSgpa] = useState(false);
+  const [sgpaSearchStudent, setSgpaSearchStudent] = useState("");
+  const [allStudents, setAllStudents] = useState<any[]>([]);
 
   /* form modal */
   const [formOpen, setFormOpen] = useState(false);
@@ -845,8 +872,127 @@ export default function CareerAdminView({
 
   async function load() {
     setLoading(true);
-    await Promise.all([loadOpportunities(), loadApplications(), loadMyDepts()]);
+    await Promise.all([loadOpportunities(), loadApplications(), loadMyDepts(), loadVerificationData()]);
     setLoading(false);
+  }
+
+  async function loadVerificationData() {
+    setVerificationLoading(true);
+    try {
+      const { data: profs, error } = await supabase
+        .from("student_career_profiles")
+        .select(`
+          id, profile_id, student_id,
+          marks_10th, marks_10th_verified,
+          marks_12th, marks_12th_verified,
+          active_backlogs, total_backlogs, backlogs_verified,
+          technical_skills, soft_skills,
+          profiles:profile_id(id, full_name, email),
+          students:student_id(id, student_id, name, department_id, batch_id)
+        `);
+
+      if (!error && profs) {
+        setVerificationProfiles(profs);
+      }
+
+      const { data: studs } = await supabase
+        .from("students")
+        .select("id, student_id, name, department_id, batch_id")
+        .order("name");
+      if (studs) setAllStudents(studs);
+    } catch (e: any) {
+      console.warn("Verification load:", e.message);
+    } finally {
+      setVerificationLoading(false);
+    }
+  }
+
+  async function verifyField(profileRowId: string, field: "marks_10th" | "marks_12th" | "backlogs" | "all") {
+    try {
+      const updatePayload: any = {};
+      if (field === "marks_10th" || field === "all") updatePayload.marks_10th_verified = true;
+      if (field === "marks_12th" || field === "all") updatePayload.marks_12th_verified = true;
+      if (field === "backlogs" || field === "all") updatePayload.backlogs_verified = true;
+
+      const { error } = await supabase
+        .from("student_career_profiles")
+        .update(updatePayload)
+        .eq("id", profileRowId);
+
+      if (error) throw error;
+      notify("Verification status updated!");
+      setVerificationProfiles((prev) =>
+        prev.map((p) => (p.id === profileRowId ? { ...p, ...updatePayload } : p))
+      );
+    } catch (err: any) {
+      showError(err.message || "Failed to update verification");
+    }
+  }
+
+  async function loadStudentSgpa(student: any) {
+    setSelectedStudentForSgpa(student);
+    const { data, error } = await supabase
+      .from("student_sgpa_records")
+      .select("*")
+      .eq("student_id", student.id)
+      .order("semester_no", { ascending: true });
+    if (!error && data) {
+      setSgpaRecords(data);
+    } else {
+      setSgpaRecords([]);
+    }
+  }
+
+  async function saveSgpaRecord() {
+    if (!selectedStudentForSgpa) return;
+    const sgpaVal = parseFloat(sgpaForm.sgpa);
+    if (isNaN(sgpaVal) || sgpaVal < 0 || sgpaVal > 10) {
+      showError("Please enter a valid SGPA between 0.0 and 10.0");
+      return;
+    }
+    setSavingSgpa(true);
+    try {
+      const payload = {
+        student_id: selectedStudentForSgpa.id,
+        semester_no: Number(sgpaForm.semester_no),
+        semester_name: sgpaForm.semester_name || `Semester ${sgpaForm.semester_no}`,
+        sgpa: sgpaVal,
+        cgpa: sgpaForm.cgpa ? parseFloat(sgpaForm.cgpa) : sgpaVal,
+        backlogs: parseInt(sgpaForm.backlogs) || 0,
+      };
+
+      const { error } = await supabase
+        .from("student_sgpa_records")
+        .upsert(payload, { onConflict: "student_id,semester_no" });
+
+      if (error) throw error;
+      notify(`Semester ${payload.semester_no} record saved!`);
+      loadStudentSgpa(selectedStudentForSgpa);
+      setSgpaForm((prev) => ({
+        ...prev,
+        semester_no: Math.min(8, prev.semester_no + 1),
+        semester_name: `Semester ${Math.min(8, prev.semester_no + 1)}`,
+        sgpa: "",
+        cgpa: "",
+        backlogs: "0",
+      }));
+    } catch (err: any) {
+      showError(err.message || "Failed to save SGPA record");
+    } finally {
+      setSavingSgpa(false);
+    }
+  }
+
+  async function deleteSgpaRecord(id: string) {
+    if (!window.confirm("Delete this semester record?")) return;
+    try {
+      const { error } = await supabase.from("student_sgpa_records").delete().eq("id", id);
+      if (error) throw error;
+      notify("Grade record removed");
+      setSgpaRecords((prev) => prev.filter((r) => r.id !== id));
+    } catch (err: any) {
+      showError(err.message || "Failed to delete record");
+    }
   }
 
   async function loadMyDepts() {
@@ -1264,6 +1410,7 @@ export default function CareerAdminView({
             { key: "opportunities", label: "Drives & Postings", icon: <Building2 size={15} /> },
             { key: "ats", label: "Applicant Tracking", icon: <Users size={15} /> },
             { key: "analytics", label: "Analytics", icon: <BarChart3 size={15} /> },
+            { key: "verification", label: "Verification & SGPA", icon: <GraduationCap size={15} /> },
           ] as const
         ).map((t) => (
           <button
@@ -1499,9 +1646,27 @@ export default function CareerAdminView({
                     return (
                       <tr key={app.id} style={{ borderBottom: "1px solid #f1f5f9", background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
                         <td style={{ padding: "12px 16px" }}>
-                          <div style={{ fontWeight: 700, color: "#0f172a" }}>
+                          <button
+                            type="button"
+                            onClick={() => { setCandidateApp(app); setCandidateModalOpen(true); }}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              padding: 0,
+                              font: "inherit",
+                              textAlign: "left",
+                              cursor: "pointer",
+                              fontWeight: 700,
+                              color: "#2563eb",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px",
+                            }}
+                            title="Click to view candidate details & screening answers"
+                          >
                             {app.students?.name || app.profiles?.full_name || "—"}
-                          </div>
+                            <Eye size={12} color="#64748b" />
+                          </button>
                           <div style={{ fontSize: "12px", color: "#64748b" }}>
                             {app.students?.student_id && <span>{app.students.student_id} &bull; </span>}
                             {app.profiles?.email}
@@ -1682,6 +1847,407 @@ export default function CareerAdminView({
             {visibleOpps.length === 0 && (
               <p style={{ textAlign: "center", color: "#94a3b8", padding: "20px 0" }}>No drives available</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════
+          TAB 4: ACADEMIC VERIFICATION & SGPA
+      ══════════════════════════════════════════ */}
+      {activeTab === "verification" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          {/* Section 1: Board Marks & Backlogs Verification Queue */}
+          <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "24px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px", marginBottom: "18px" }}>
+              <div>
+                <SectionHeader
+                  icon={<ShieldCheck size={18} color="#2563eb" />}
+                  title="Academic Marks & Backlog Verification Queue"
+                  subtitle="Verify student self-declared 10th marks, 12th marks, and active backlogs"
+                />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", cursor: "pointer", fontWeight: 600, color: "#475569" }}>
+                  <input
+                    type="checkbox"
+                    checked={showOnlyPending}
+                    onChange={(e) => setShowOnlyPending(e.target.checked)}
+                  />
+                  Pending Verification Only
+                </label>
+                <div style={{ position: "relative" }}>
+                  <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+                  <input
+                    type="text"
+                    placeholder="Search student..."
+                    value={verificationSearch}
+                    onChange={(e) => setVerificationSearch(e.target.value)}
+                    style={{ padding: "6px 10px 6px 30px", fontSize: "13px", borderRadius: "8px", border: "1px solid #d1d5db" }}
+                  />
+                </div>
+                <button
+                  className="secondary-btn"
+                  onClick={loadVerificationData}
+                  disabled={verificationLoading}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", padding: "7px 12px" }}
+                >
+                  <RefreshCw size={13} className={verificationLoading ? "animate-spin" : ""} />
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {/* Verification Table */}
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", textAlign: "left", color: "#475569" }}>
+                    <th style={{ padding: "10px 14px" }}>Student</th>
+                    <th style={{ padding: "10px 14px" }}>Dept & Batch</th>
+                    <th style={{ padding: "10px 14px" }}>10th Marks</th>
+                    <th style={{ padding: "10px 14px" }}>12th Marks</th>
+                    <th style={{ padding: "10px 14px" }}>Active Backlogs</th>
+                    <th style={{ padding: "10px 14px", textAlign: "right" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {verificationProfiles
+                    .filter((p) => {
+                      if (isCoordinator && myDeptIds.length > 0 && p.students?.department_id) {
+                        if (!myDeptIds.includes(p.students.department_id)) return false;
+                      }
+                      if (showOnlyPending) {
+                        const isPending = !p.marks_10th_verified || !p.marks_12th_verified || !p.backlogs_verified;
+                        if (!isPending) return false;
+                      }
+                      if (verificationSearch) {
+                        const term = verificationSearch.toLowerCase();
+                        const sName = (p.students?.name || p.profiles?.full_name || "").toLowerCase();
+                        const sRoll = (p.students?.student_id || "").toLowerCase();
+                        if (!sName.includes(term) && !sRoll.includes(term)) return false;
+                      }
+                      return true;
+                    })
+                    .map((p, i) => {
+                      const dept = departments.find((d) => d.id === p.students?.department_id);
+                      const batch = batches.find((b) => b.id === p.students?.batch_id);
+                      const allVerified = p.marks_10th_verified && p.marks_12th_verified && p.backlogs_verified;
+
+                      return (
+                        <tr key={p.id} style={{ borderBottom: "1px solid #f1f5f9", background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                          <td style={{ padding: "12px 14px" }}>
+                            <div style={{ fontWeight: 700, color: "#0f172a" }}>
+                              {p.students?.name || p.profiles?.full_name || "—"}
+                            </div>
+                            <div style={{ fontSize: "12px", color: "#64748b" }}>
+                              {p.students?.student_id && <span>{p.students.student_id} &bull; </span>}
+                              {p.profiles?.email}
+                            </div>
+                          </td>
+                          <td style={{ padding: "12px 14px" }}>
+                            <div>{dept?.name || "—"}</div>
+                            <div style={{ fontSize: "12px", color: "#64748b" }}>{batch?.name || "—"}</div>
+                          </td>
+                          <td style={{ padding: "12px 14px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <span style={{ fontWeight: 600 }}>{p.marks_10th != null ? `${p.marks_10th}%` : "—"}</span>
+                              {p.marks_10th_verified ? (
+                                <span style={{ fontSize: "11px", color: "#166534", background: "#dcfce7", padding: "2px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                                  ✓ Verified
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => verifyField(p.id, "marks_10th")}
+                                  style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600 }}
+                                >
+                                  Verify
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ padding: "12px 14px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <span style={{ fontWeight: 600 }}>{p.marks_12th != null ? `${p.marks_12th}%` : "—"}</span>
+                              {p.marks_12th_verified ? (
+                                <span style={{ fontSize: "11px", color: "#166534", background: "#dcfce7", padding: "2px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                                  ✓ Verified
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => verifyField(p.id, "marks_12th")}
+                                  style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600 }}
+                                >
+                                  Verify
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ padding: "12px 14px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <span style={{ fontWeight: 600 }}>{p.active_backlogs ?? 0}</span>
+                              {p.backlogs_verified ? (
+                                <span style={{ fontSize: "11px", color: "#166534", background: "#dcfce7", padding: "2px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                                  ✓ Verified
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => verifyField(p.id, "backlogs")}
+                                  style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600 }}
+                                >
+                                  Verify
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ padding: "12px 14px", textAlign: "right" }}>
+                            {!allVerified ? (
+                              <button
+                                type="button"
+                                className="primary-btn"
+                                onClick={() => verifyField(p.id, "all")}
+                                style={{ padding: "4px 10px", fontSize: "12px", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                              >
+                                <Check size={12} /> Verify All
+                              </button>
+                            ) : (
+                              <span style={{ color: "#166534", fontWeight: 700, fontSize: "12px" }}>✓ Fully Verified</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+              {verificationProfiles.length === 0 && (
+                <div style={{ textAlign: "center", padding: "30px", color: "#94a3b8" }}>
+                  No candidate profiles recorded yet or migration_career_stage3.sql not yet executed.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Section 2: Official SGPA & Semester Records Management */}
+          <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "24px" }}>
+            <SectionHeader
+              icon={<GraduationCap size={18} color="#2563eb" />}
+              title="Official Semester SGPA & CGPA Records"
+              subtitle="Coordinators enter official semester grades here — strictly read-only for students"
+            />
+
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) 2fr", gap: "24px", marginTop: "16px" }}>
+              {/* Left Column: Student Selector */}
+              <div style={{ borderRight: "1px solid #f1f5f9", paddingRight: "20px" }}>
+                <label style={{ fontWeight: 700, fontSize: "13px", marginBottom: "8px", display: "block" }}>
+                  Select Student
+                </label>
+                <div style={{ position: "relative", marginBottom: "12px" }}>
+                  <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
+                  <input
+                    type="text"
+                    placeholder="Search name or roll no..."
+                    value={sgpaSearchStudent}
+                    onChange={(e) => setSgpaSearchStudent(e.target.value)}
+                    style={{ width: "100%", padding: "7px 10px 7px 32px", fontSize: "13px", borderRadius: "8px", border: "1px solid #d1d5db" }}
+                  />
+                </div>
+
+                <div style={{ maxHeight: "320px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px" }}>
+                  {allStudents
+                    .filter((s) => {
+                      if (isCoordinator && myDeptIds.length > 0 && s.department_id) {
+                        if (!myDeptIds.includes(s.department_id)) return false;
+                      }
+                      if (sgpaSearchStudent) {
+                        const term = sgpaSearchStudent.toLowerCase();
+                        return (
+                          (s.name || "").toLowerCase().includes(term) ||
+                          (s.student_id || "").toLowerCase().includes(term)
+                        );
+                      }
+                      return true;
+                    })
+                    .slice(0, 40)
+                    .map((s) => {
+                      const isSelected = selectedStudentForSgpa?.id === s.id;
+                      const dept = departments.find((d) => d.id === s.department_id);
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => loadStudentSgpa(s)}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: "8px",
+                            cursor: "pointer",
+                            background: isSelected ? "#eff6ff" : "#f8fafc",
+                            border: `1px solid ${isSelected ? "#93c5fd" : "#e2e8f0"}`,
+                            transition: "all 0.15s",
+                          }}
+                        >
+                          <div style={{ fontWeight: 700, fontSize: "13px", color: isSelected ? "#1e40af" : "#0f172a" }}>
+                            {s.name}
+                          </div>
+                          <div style={{ fontSize: "11px", color: "#64748b" }}>
+                            {s.student_id} {dept?.code ? `• ${dept.code}` : ""}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* Right Column: Grades for selected student */}
+              <div>
+                {selectedStudentForSgpa ? (
+                  <div>
+                    <div style={{ padding: "12px 16px", background: "#f8fafc", borderRadius: "10px", marginBottom: "16px", border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontWeight: 800, fontSize: "15px", color: "#0f172a" }}>
+                        {selectedStudentForSgpa.name}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b" }}>
+                        Roll No: {selectedStudentForSgpa.student_id} &bull; Dept: {departments.find((d) => d.id === selectedStudentForSgpa.department_id)?.name || "—"}
+                      </div>
+                    </div>
+
+                    {/* Grade input form */}
+                    <div style={{ padding: "16px", background: "#f1f5f9", borderRadius: "12px", marginBottom: "20px" }}>
+                      <div style={{ fontWeight: 700, fontSize: "13px", marginBottom: "12px", color: "#1e293b" }}>
+                        Record / Update Semester Grade
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "10px" }}>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: 600 }}>Semester</label>
+                          <select
+                            value={sgpaForm.semester_no}
+                            onChange={(e) => {
+                              const sem = Number(e.target.value);
+                              setSgpaForm({
+                                ...sgpaForm,
+                                semester_no: sem,
+                                semester_name: `Semester ${sem}`,
+                              });
+                            }}
+                            style={{ width: "100%", padding: "7px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                          >
+                            {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                              <option key={s} value={s}>Sem {s}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: 600 }}>SGPA (0-10) *</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="10"
+                            placeholder="e.g. 8.45"
+                            value={sgpaForm.sgpa}
+                            onChange={(e) => setSgpaForm({ ...sgpaForm, sgpa: e.target.value })}
+                            style={{ width: "100%", padding: "7px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: 600 }}>CGPA (0-10)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="10"
+                            placeholder="e.g. 8.20"
+                            value={sgpaForm.cgpa}
+                            onChange={(e) => setSgpaForm({ ...sgpaForm, cgpa: e.target.value })}
+                            style={{ width: "100%", padding: "7px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: "11px", fontWeight: 600 }}>Backlogs</label>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={sgpaForm.backlogs}
+                            onChange={(e) => setSgpaForm({ ...sgpaForm, backlogs: e.target.value })}
+                            style={{ width: "100%", padding: "7px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "13px" }}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end" }}>
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          disabled={savingSgpa || !sgpaForm.sgpa}
+                          onClick={saveSgpaRecord}
+                          style={{ padding: "6px 16px", fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px" }}
+                        >
+                          <CheckCircle size={14} /> {savingSgpa ? "Saving..." : "Save Grade"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Existing Records Table */}
+                    <div style={{ fontWeight: 700, fontSize: "13px", marginBottom: "8px", color: "#334155" }}>
+                      Recorded Semesters ({sgpaRecords.length})
+                    </div>
+                    {sgpaRecords.length > 0 ? (
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", textAlign: "left" }}>
+                            <th style={{ padding: "8px 12px" }}>Semester</th>
+                            <th style={{ padding: "8px 12px" }}>SGPA</th>
+                            <th style={{ padding: "8px 12px" }}>Cumulative CGPA</th>
+                            <th style={{ padding: "8px 12px" }}>Backlogs</th>
+                            <th style={{ padding: "8px 12px", textAlign: "right" }}>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sgpaRecords.map((r) => (
+                            <tr key={r.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                              <td style={{ padding: "8px 12px", fontWeight: 600 }}>
+                                {r.semester_name || `Sem ${r.semester_no}`}
+                              </td>
+                              <td style={{ padding: "8px 12px", fontWeight: 700, color: "#1e40af" }}>
+                                {Number(r.sgpa).toFixed(2)}
+                              </td>
+                              <td style={{ padding: "8px 12px", fontWeight: 700, color: "#047857" }}>
+                                {r.cgpa ? Number(r.cgpa).toFixed(2) : "—"}
+                              </td>
+                              <td style={{ padding: "8px 12px" }}>
+                                {r.backlogs > 0 ? (
+                                  <span style={{ color: "#b91c1c", fontWeight: 700 }}>{r.backlogs}</span>
+                                ) : (
+                                  <span style={{ color: "#166534" }}>0</span>
+                                )}
+                              </td>
+                              <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteSgpaRecord(r.id)}
+                                  style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}
+                                  title="Delete"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div style={{ textAlign: "center", padding: "20px", color: "#94a3b8", fontSize: "13px" }}>
+                        No semester grades recorded yet for this student. Use the form above to add their official SGPA.
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: "center", padding: "40px", color: "#94a3b8" }}>
+                    ← Select a student from the left to view and record official semester grades
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -2220,6 +2786,158 @@ export default function CareerAdminView({
               <button className="secondary-btn" onClick={() => setFeedbackOpen(false)}>Cancel</button>
               <button className="primary-btn" onClick={saveFeedback} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                 <CheckCircle size={14} /> Save Notes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════
+          CANDIDATE DETAILS MODAL (ATS)
+      ══════════════════════════════════════════ */}
+      {candidateModalOpen && candidateApp && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 2002, padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#fff", borderRadius: "18px", width: "100%", maxWidth: "680px",
+              maxHeight: "85vh", overflowY: "auto", padding: "28px", boxShadow: "0 24px 48px rgba(0,0,0,0.18)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "18px" }}>
+              <div>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#2563eb", textTransform: "uppercase" }}>
+                  Application Details
+                </span>
+                <h2 style={{ margin: "4px 0 2px", fontSize: "20px", fontWeight: 800, color: "#0f172a" }}>
+                  {candidateApp.students?.name || candidateApp.profiles?.full_name || "Candidate"}
+                </h2>
+                <div style={{ fontSize: "13px", color: "#64748b" }}>
+                  {candidateApp.students?.student_id && <span>Roll No: {candidateApp.students.student_id} &bull; </span>}
+                  {candidateApp.profiles?.email}
+                </div>
+              </div>
+              <button
+                onClick={() => setCandidateModalOpen(false)}
+                style={{ background: "transparent", border: "none", cursor: "pointer", color: "#94a3b8" }}
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            {/* Application Meta Bar */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", padding: "14px", background: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0", marginBottom: "20px" }}>
+              <div>
+                <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Opportunity</span>
+                <strong style={{ fontSize: "13px" }}>{candidateApp.career_opportunities?.title}</strong>
+              </div>
+              <div>
+                <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Company</span>
+                <strong style={{ fontSize: "13px" }}>{candidateApp.career_opportunities?.company_name}</strong>
+              </div>
+              <div>
+                <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Applied On</span>
+                <strong style={{ fontSize: "13px" }}>{new Date(candidateApp.applied_at).toLocaleDateString()}</strong>
+              </div>
+              <div>
+                <span style={{ fontSize: "11px", color: "#64748b", display: "block" }}>Current Stage</span>
+                <strong style={{ fontSize: "13px", textTransform: "capitalize", color: "#2563eb" }}>{candidateApp.status}</strong>
+              </div>
+            </div>
+
+            {/* Resume Link */}
+            <div style={{ marginBottom: "20px" }}>
+              <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "6px" }}>Submitted Resume</label>
+              {candidateApp.resume_url ? (
+                <a
+                  href={candidateApp.resume_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="secondary-btn"
+                  style={{ display: "inline-flex", alignItems: "center", gap: "8px", textDecoration: "none", fontSize: "13px" }}
+                >
+                  <ExternalLink size={14} /> Open Resume in New Tab
+                </a>
+              ) : (
+                <span style={{ color: "#94a3b8", fontSize: "13px" }}>No resume link provided</span>
+              )}
+            </div>
+
+            {/* Cover Letter */}
+            {candidateApp.cover_letter && (
+              <div style={{ marginBottom: "20px" }}>
+                <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "6px" }}>Cover Letter / Note</label>
+                <div style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: "10px", fontSize: "13px", color: "#334155", border: "1px solid #e2e8f0", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+                  {candidateApp.cover_letter}
+                </div>
+              </div>
+            )}
+
+            {/* Screening Answers */}
+            {candidateApp.custom_answers && Object.keys(candidateApp.custom_answers).length > 0 && (
+              <div style={{ marginBottom: "20px" }}>
+                <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "8px" }}>Screening Questions & Responses</label>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {Object.entries(candidateApp.custom_answers).map(([qId, ans], idx) => {
+                    const qObj = candidateApp.career_opportunities?.custom_questions?.find((cq: any) => cq.id === qId);
+                    const qText = qObj?.question || `Question ${idx + 1}`;
+                    return (
+                      <div key={qId} style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                        <div style={{ fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
+                          {idx + 1}. {qText}
+                        </div>
+                        <div style={{ fontSize: "13px", color: "#0f172a", fontWeight: 600 }}>
+                          {String(ans) || "—"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Stage Updater */}
+            <div style={{ marginBottom: "20px", padding: "16px", background: "#f1f5f9", borderRadius: "12px" }}>
+              <label style={{ fontSize: "13px", fontWeight: 700, display: "block", marginBottom: "8px" }}>Update Application Stage</label>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {["applied", "screening", "interview", "offered", "rejected", "withdrawn"].map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={async () => {
+                      await updateCandidateStatus(candidateApp.id, st);
+                      setCandidateApp({ ...candidateApp, status: st });
+                    }}
+                    style={{
+                      padding: "6px 14px",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      textTransform: "capitalize",
+                      border: candidateApp.status === st ? "2px solid #2563eb" : "1px solid #cbd5e1",
+                      background: candidateApp.status === st ? "#dbeafe" : "#fff",
+                      color: candidateApp.status === st ? "#1e40af" : "#475569",
+                    }}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setCandidateModalOpen(false)}
+              >
+                Close
               </button>
             </div>
           </div>
