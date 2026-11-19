@@ -1,66 +1,65 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Netlify serverless function timeout: keep route under the platform limit.
-export const maxDuration = 45;
+// ─────────────────────────────────────────────────────────────────────────────
+// Tell Next.js / Netlify this function may run up to 25 s.
+// ─────────────────────────────────────────────────────────────────────────────
+export const maxDuration = 25; // seconds
 
-// Valid Gemini model IDs for the Generative Language API.
-// Prioritize fast, high-accuracy flash models.
-const MODELS = [
-  "gemini-3.5-flash-lite",
-  "gemini-3.5-flash",
-  "gemini-2.5-flash",
-];
+// ─────────────────────────────────────────────────────────────────────────────
+// Primary: gemini-3.5-flash  |  Fallback: gemini-3.5-flash-lite
+// ─────────────────────────────────────────────────────────────────────────────
+const MODELS_TO_TRY: string[] = (
+  process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []
+).concat([
+  "gemini-3.5-flash",      // 🥇 primary — latest & most capable
+  "gemini-3.5-flash-lite", // 🥈 fallback — lightweight and current
+  "gemini-2.0-flash",      // 🥉 last resort — stable & reliable
+]);
 
-// Keep each model attempt short enough that the whole OCR request can finish
-// inside Netlify's serverless limits before the frontend gets a 504 HTML page.
-const MODEL_TIMEOUT_MS = 12_000;
+/** Max ms to wait for one model call before giving up and trying the next. */
+const PER_MODEL_TIMEOUT_MS = 12_000;
+
+/** Wrap a promise so it rejects after `ms` milliseconds. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms (${label})`)), ms)
+    ),
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
+  const primaryKey = process.env.GEMINI_API_KEY;
+  const fallbackKey = process.env.GEMINI_API_KEY_FALLBACK;
+
+  if (!primaryKey) {
+    return NextResponse.json(
+      { error: "GEMINI_API_KEY is not configured on the server." },
+      { status: 500 }
+    );
+  }
+
+  // Primary key first; if every model fails with it, retry all with fallback key.
+  const apiKeysToTry = fallbackKey ? [primaryKey, fallbackKey] : [primaryKey];
+
   try {
     const apiKey =
       process.env.GEMINI_API_KEY ||
       process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY is not configured on the server." },
-        { status: 500 }
-      );
+    if (!imageFile) {
+      return NextResponse.json({ error: "No image file provided." }, { status: 400 });
     }
 
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to parse request body. Please try again." },
-      { status: 400 }
-    );
-  }
+    const arrayBuffer = await imageFile.arrayBuffer();
+    const base64Image = Buffer.from(arrayBuffer).toString("base64");
+    const mimeType = imageFile.type || "image/jpeg";
 
-  const imageFile = formData.get("image") as File | null;
-
-  if (!imageFile) {
-    return NextResponse.json(
-      { error: "No image file provided." },
-      { status: 400 }
-    );
-  }
-
-  // Convert the uploaded file to base64 for the Gemini API
-  const arrayBuffer = await imageFile.arrayBuffer();
-  const base64Image = Buffer.from(arrayBuffer).toString("base64");
-  const mimeType = imageFile.type || "image/jpeg";
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const fallbackKey = process.env.GEMINI_API_KEY_FALLBACK;
-  const clients: GoogleGenerativeAI[] = [genAI];
-  if (fallbackKey && fallbackKey !== apiKey) {
-    clients.push(new GoogleGenerativeAI(fallbackKey));
-  }
-
-  const prompt = `You are an OCR assistant for an academic attendance system.
+    const prompt = `You are an OCR assistant for an academic attendance system.
 Your task is to extract ALL 4-digit numeric codes written on this attendance sheet image.
 
 Rules:
@@ -77,96 +76,79 @@ If no codes are found, return: {"codes": []}
 
 Do not include any explanation, markdown, or extra text — only valid JSON.`;
 
-  let responseText = "";
-  let usedModel = "";
-  let lastError: unknown = null;
+    let responseText = "";
+    let usedModel = "";
+    let lastError: unknown = null;
 
-  outer: for (const client of clients) {
-    for (const modelName of MODELS) {
-      try {
-        const model = client.getGenerativeModel({
-          model: modelName,
-          generationConfig: {
-            responseMimeType: "application/json",
-          },
-        });
+    // ── Try every model with each key in turn ──────────────────────────────
+    outer:
+    for (const apiKey of apiKeysToTry) {
+      const genAI = new GoogleGenerativeAI(apiKey);
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
-
+      for (const modelName of MODELS_TO_TRY) {
         try {
-          const result = await Promise.race([
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            generationConfig: { responseMimeType: "application/json" },
+          });
+
+          const result = await withTimeout(
             model.generateContent([
               prompt,
               { inlineData: { mimeType, data: base64Image } },
             ]),
-            new Promise<never>((_, reject) => {
-              controller.signal.addEventListener("abort", () => {
-                reject(new Error(`Model ${modelName} timed out after ${MODEL_TIMEOUT_MS / 1000}s`));
-              });
-            }),
-          ]);
+            PER_MODEL_TIMEOUT_MS,
+            modelName
+          );
 
-          responseText = (result as Awaited<ReturnType<typeof model.generateContent>>)
-            .response.text()
-            .trim();
+          responseText = result.response.text().trim();
           usedModel = modelName;
           lastError = null;
-          break outer;
-        } finally {
-          clearTimeout(timeout);
+          break outer; // ✅ success — stop all loops
+        } catch (err: unknown) {
+          lastError = err;
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[OCR] model=${modelName} key=…${apiKey.slice(-6)} failed: ${msg}`
+          );
         }
-      } catch (err: unknown) {
-        lastError = err;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`Gemini OCR [${modelName}] failed:`, msg);
       }
     }
-  }
 
-  if (!responseText) {
-    const message =
-      lastError instanceof Error ? lastError.message : "All Gemini models failed.";
-    console.error("Gemini OCR — all models exhausted:", message);
-    return NextResponse.json(
-      { error: `OCR failed: ${message}`, codes: [] },
-      { status: 502 }
-    );
-  }
+    if (!responseText) {
+      // All attempts exhausted
+      const msg =
+        lastError instanceof Error ? lastError.message : "All Gemini models failed.";
+      console.error("[OCR] All models/keys exhausted. Last error:", msg);
+      return NextResponse.json({ error: msg }, { status: 502 });
+    }
 
-  const jsonText = responseText
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
+    // ── Strip markdown fences if the model wrapped the JSON ────────────────
+    const jsonText = responseText
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/```$/i, "")
+      .trim();
 
-  let parsed: { codes: string[] };
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    console.error("Gemini response was not valid JSON:", responseText);
-    return NextResponse.json(
-      {
-        error: "Gemini returned an unexpected format.",
-        raw: responseText,
-        codes: [],
-        model: usedModel,
-      },
-      { status: 200 }
-    );
-  }
+    let parsed: { codes: string[] };
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      console.error("[OCR] Response was not valid JSON:", responseText);
+      return NextResponse.json(
+        { error: "Gemini returned an unexpected format.", raw: responseText, codes: [], model: usedModel },
+        { status: 200 }
+      );
+    }
 
   const codes: string[] = (parsed.codes ?? [])
     .map((c: string) => String(c).trim())
     .filter((c: string) => /^\d{4}$/.test(c));
 
-  return NextResponse.json({ codes, raw: responseText, model: usedModel });
-  } catch (err: unknown) {
-    console.error("Unhandled error in /api/ocr:", err);
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json(
-      { error: `OCR server error: ${message}`, codes: [] },
-      { status: 500 }
-    );
+    return NextResponse.json({ codes, raw: responseText, model: usedModel });
+  } catch (err) {
+    console.error("[OCR] Unhandled error:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
